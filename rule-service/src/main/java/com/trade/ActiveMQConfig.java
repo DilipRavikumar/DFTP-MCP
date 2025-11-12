@@ -10,6 +10,7 @@ import org.springframework.jms.core.JmsTemplate;
 @Configuration
 @EnableJms
 public class ActiveMQConfig {
+
     @Bean
     public ActiveMQConnectionFactory connectionFactory() {
         ActiveMQConnectionFactory factory = new ActiveMQConnectionFactory();
@@ -19,14 +20,20 @@ public class ActiveMQConfig {
 
     @Bean
     public JmsTemplate jmsTemplate() {
-        return new JmsTemplate(connectionFactory());
+        // By default, set to queues (pubSubDomain=false)
+        JmsTemplate template = new JmsTemplate(connectionFactory());
+        template.setPubSubDomain(false);
+        return template;
     }
 
     @Bean
     public DefaultJmsListenerContainerFactory jmsListenerContainerFactory() {
         DefaultJmsListenerContainerFactory factory = new DefaultJmsListenerContainerFactory();
         factory.setConnectionFactory(connectionFactory());
-        factory.setPubSubDomain(true); // Enables topic-based pub-sub
+        factory.setPubSubDomain(true); // Set for Topic
+        factory.setSubscriptionDurable(true); // Durable subscription
+        factory.setClientId("RuleServiceClientId"); // Must be unique per service
         return factory;
     }
 }
+
