@@ -1,0 +1,43 @@
+{
+  "server": {
+    "host": "0.0.0.0",
+    "port": 8000,
+    "name": "Generic MCP Gateway Server"
+  },
+  "endpoints": {
+    "max_id_based_endpoints": 50,
+    "max_other_endpoints": 50,
+    "default_endpoint_limit": 50,
+    "allowed_methods": ["GET"]
+  },
+  "timeouts": {
+    "api_spec_load": 10.0,
+    "api_call": 30.0,
+    "openapi_fetch": 5.0
+  },
+  "llm": {
+    "aws_region": "us-east-2",
+    "model_id": "us.amazon.nova-pro-v1:0",
+    "enabled": true
+  },
+  "limits": {
+    "max_extract_depth": 3,
+    "max_extract_items": 10,
+    "error_message_truncate": 150,
+    "error_text_truncate": 200,
+    "max_range_size": 1000
+  },
+  "matching": {
+    "exact_match_score": 3,
+    "partial_match_score": 2
+  },
+  "mode_selection": {
+    "mode_2_keywords": ["and then", "then", "multiple", "chain"],
+    "classification_prompt": "Analyze the following user prompt and determine if it requires:\nMODE 1 (mode_1): A single-step API action - a simple, direct API call.\nMODE 2 (mode_2): A multi-step workflow - requires multiple API operations.\n\nUser prompt: \"{prompt}\"\n\nRespond with ONLY \"mode_1\" or \"mode_2\" - nothing else."
+  },
+  "display": {
+    "separator_length": 60
+  },
+  "servers_config_file": "servers.json"
+}
+
