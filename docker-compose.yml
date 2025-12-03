@@ -1,0 +1,22 @@
+version: '3.8'
+services:
+  activemq:
+    image: apache/activemq-classic:latest
+    container_name: activemq
+    ports:
+      - "61616:61616"
+      - "8161:8161"
+    environment:
+      - ACTIVEMQ_CONFIG_NAME=activemq
+      - ACTIVEMQ_CONFIG_DEFAULTACCOUNT=false
+    volumes:
+      - activemq_data:/opt/apache-activemq/data
+    networks:
+      - trade-network
+
+networks:
+  trade-network:
+    driver: bridge
+
+volumes:
+  activemq_data:

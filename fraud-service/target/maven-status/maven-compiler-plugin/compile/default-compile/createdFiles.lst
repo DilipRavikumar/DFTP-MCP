@@ -1,0 +1,6 @@
+com\trade\FraudResultRepository.class
+com\trade\FraudResult.class
+com\trade\ActiveMQConfig.class
+com\trade\FraudMessageListener.class
+com\trade\FraudController.class
+com\trade\FraudServiceApplication.class
