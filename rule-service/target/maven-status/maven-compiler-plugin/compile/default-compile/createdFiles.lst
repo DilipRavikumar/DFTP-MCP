@@ -1,6 +1,0 @@
-com\trade\RuleServiceApplication.class
-com\trade\ActiveMQConfig.class
-com\trade\RuleController.class
-com\trade\RuleResultRepository.class
-com\trade\RuleMessageListener.class
-com\trade\RuleResult.class

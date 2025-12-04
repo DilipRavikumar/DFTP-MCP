@@ -1,1 +1,0 @@
-\"USE taskhubdb; SHOW TABLES;\"  

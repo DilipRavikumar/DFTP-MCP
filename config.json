@@ -5,10 +5,10 @@
     "name": "Generic MCP Gateway Server"
   },
   "endpoints": {
-    "max_id_based_endpoints": 50,
+    "max_parameterized_endpoints": 50,
     "max_other_endpoints": 50,
     "default_endpoint_limit": 50,
-    "allowed_methods": ["GET"]
+    "allowed_methods": ["GET","POST","PUT"]
   },
   "timeouts": {
     "api_spec_load": 10.0,
@@ -32,8 +32,7 @@
     "partial_match_score": 2
   },
   "mode_selection": {
-    "mode_2_keywords": ["and then", "then", "multiple", "chain"],
-    "classification_prompt": "Analyze the following user prompt and determine if it requires:\nMODE 1 (mode_1): A single-step API action - a simple, direct API call.\nMODE 2 (mode_2): A multi-step workflow - requires multiple API operations.\n\nUser prompt: \"{prompt}\"\n\nRespond with ONLY \"mode_1\" or \"mode_2\" - nothing else."
+    "mode_2_keywords": ["and then", "then", "multiple", "chain"]
   },
   "display": {
     "separator_length": 60
