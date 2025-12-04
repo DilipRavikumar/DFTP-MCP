@@ -1,5 +1,3 @@
-# main.py
-
 import httpx
 import json
 import re
@@ -8,23 +6,17 @@ import asyncio
 from typing import List, Dict, Any, Optional
 from fastmcp import FastMCP
 
-# Optional Bedrock imports
 try:
     from langchain_aws import ChatBedrock
 except ImportError:
     from langchain_community.chat_models import ChatBedrock
 
-# Optional dotenv
 try:
     from dotenv import load_dotenv
     load_dotenv()
 except ImportError:
     pass
 
-
-# ---------------------------------------------------------------------
-# DEEP MERGE (config merge: default + file + environment)
-# ---------------------------------------------------------------------
 def _deep_merge(default: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:
     result = default.copy()
     for k, v in override.items():
@@ -34,10 +26,6 @@ def _deep_merge(default: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, 
             result[k] = v
     return result
 
-
-# ---------------------------------------------------------------------
-# LOAD CONFIG (with defaults)
-# ---------------------------------------------------------------------
 def load_config(config_path: str = "config.json") -> Dict[str, Any]:
     default_config = {
         "server": {"host": "0.0.0.0", "port": 8000, "name": "Generic MCP Gateway"},
@@ -70,13 +58,6 @@ def load_config(config_path: str = "config.json") -> Dict[str, Any]:
         },
         "mode_selection": {
             "mode_2_keywords": ["and then", "then", "multiple", "chain"],
-            # NOTE: classification_prompt is defined but not used - hardcoded prompt is used in analyze_prompt instead
-            # "classification_prompt":
-            #     "Analyze the following user prompt and determine if it requires:\n"
-            #     "MODE 1 (mode_1): A single-step API action.\n"
-            #     "MODE 2 (mode_2): A multi-step workflow.\n\n"
-            #     "User prompt: \"{prompt}\"\n\n"
-            #     "Respond ONLY with mode_1 or mode_2."
         },
         "display": {"separator_length": 60},
         "servers_config_file": "servers.json"
@@ -98,10 +79,6 @@ def load_config(config_path: str = "config.json") -> Dict[str, Any]:
 
     return default_config
 
-
-# ---------------------------------------------------------------------
-# LOAD SERVERS.JSON
-# ---------------------------------------------------------------------
 def load_server_configs(path: str) -> List[Dict]:
     if not os.path.exists(path):
         return []
@@ -111,14 +88,8 @@ def load_server_configs(path: str) -> List[Dict]:
     except:
         return []
 
-
-# GLOBAL CONFIG
 CONFIG = load_config()
 
-
-# ---------------------------------------------------------------------
-# MODE SELECTOR (Mode 1 & Mode 2)
-# ---------------------------------------------------------------------
 class ModeSelector:
     def __init__(self, mounted_servers, server_configs, config=None):
         self.mounted_servers = mounted_servers
@@ -165,9 +136,6 @@ class ModeSelector:
         mode_cfg = self.config["mode_selection"]
         keywords = mode_cfg["mode_2_keywords"]
         
-        # ALWAYS check for ranges and keywords FIRST (before LLM)
-        # This ensures ranges are detected even when LLM is available
-        # Check for parameter patterns (numeric ranges, quoted lists, comma-separated values) which indicate multiple calls
         range_pattern = r'\d+\s*(?:-|to|through|until)\s*\d+'
         quoted_list = r'"[^"]+"\s*,\s*"[^"]+"'
         comma_sep = r'\b\w+\s*,\s*\w+'
@@ -176,17 +144,14 @@ class ModeSelector:
             print(f"[ModeSelector] Parameter pattern detected, routing to mode_2")
             return "mode_2"
         
-        # Check for keywords
         if any(k in prompt_lower for k in keywords):
             print(f"[ModeSelector] Keywords detected, routing to mode_2")
             return "mode_2"
 
-        # If no LLM available → default to mode_1
         if not self.classification_llm:
             print(f"[ModeSelector] No LLM available, defaulting to mode_1")
             return "mode_1"
 
-        # Send classification request to LLM
         print(f"[ModeSelector] Using LLM for classification")
         classification_prompt = (
             "You are an expert API workflow classifier.\n"
@@ -203,9 +168,7 @@ class ModeSelector:
         )
 
         try:
-            # Ask LLM
             response = await self._invoke_llm(classification_prompt)
-            # Normalize
             norm = response.replace(" ", "").replace("-", "").lower().strip()
             if "mode2" in norm:
                 print(f"[ModeSelector] LLM classified as mode_2")
@@ -213,18 +176,15 @@ class ModeSelector:
             if "mode_1" in norm or "mode1" in norm:
                 print(f"[ModeSelector] LLM classified as mode_1")
                 return "mode_1"
-            # If LLM replies something strange → default to multi-step for safety
             print(f"[ModeSelector] LLM response unclear, defaulting to mode_2")
             return "mode_2"
         except Exception as e:
-            # If LLM crashed → default to single-step
             print(f"[ModeSelector] LLM error: {e}, defaulting to mode_1")
             return "mode_1"
 
     async def handle_mode_1(self, prompt: str):
         print("[MODE 1] Single-step API call")
 
-        # IMPORT WORKFLOW FUNCTIONS
         from workflow_core import get_api_specs, find_matching_endpoints, execute_api_call
 
         api_specs = await get_api_specs(self.server_configs, CONFIG)
@@ -271,15 +231,6 @@ class ModeSelector:
             return await self.handle_mode_2(prompt)
         return await self.handle_mode_1(prompt)
 
-
-# ---------------------------------------------------------------------
-# SETUP FASTMCP SERVERS
-# ---------------------------------------------------------------------
-# NOTE: async_clients list is populated but not actively used for cleanup
-# Keeping it for potential future resource management
-# async_clients: List[httpx.AsyncClient] = []
-
-
 def setup_fastmcp_server_from_openapi_spec(spec_url: str, base_url: str, name: str):
     try:
         print(f"Loading API: {name}")
@@ -293,8 +244,6 @@ def setup_fastmcp_server_from_openapi_spec(spec_url: str, base_url: str, name: s
         base_url = _extract_base_url_from_spec(spec, base_url)
 
         client = httpx.AsyncClient(base_url=base_url)
-        # async_clients.append(client)  # Not actively used for cleanup currently
-
         server = FastMCP.from_openapi(openapi_spec=spec, client=client, name=name)
 
         print(f"✓ Loaded {name} [{base_url}]")
@@ -303,10 +252,6 @@ def setup_fastmcp_server_from_openapi_spec(spec_url: str, base_url: str, name: s
         print(f"✗ Failed loading {name}: {e}")
         return None
 
-
-# ---------------------------------------------------------------------
-# MAIN SERVER FUNCTION
-# ---------------------------------------------------------------------
 def main(config_path="config.json"):
     config = load_config(config_path)
 
@@ -331,7 +276,6 @@ def main(config_path="config.json"):
         print("✗ No API servers loaded.")
         return
 
-    # Create MAIN MCP SERVER
     master_name = config["server"]["name"]
     main_server = FastMCP(name=master_name)
 
@@ -362,10 +306,6 @@ def main(config_path="config.json"):
         port=port
     )
 
-
-# ---------------------------------------------------------------------
-# ENTRYPOINT
-# ---------------------------------------------------------------------
 if __name__ == "__main__":
     import sys
     cfg = sys.argv[1] if len(sys.argv) > 1 else "config.json"
