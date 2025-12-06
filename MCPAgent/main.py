@@ -3,109 +3,79 @@ import json
 import re
 import os
 import asyncio
+import boto3
 from typing import List, Dict, Any, Optional
 from fastmcp import FastMCP
+from langchain_aws import ChatBedrock
+from dotenv import load_dotenv
 
-try:
-    from langchain_aws import ChatBedrock
-except ImportError:
-    from langchain_community.chat_models import ChatBedrock
-
-try:
-    from dotenv import load_dotenv
-    load_dotenv()
-except ImportError:
-    pass
-
-def _deep_merge(default: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:
-    result = default.copy()
-    for k, v in override.items():
-        if k in result and isinstance(result[k], dict) and isinstance(v, dict):
-            result[k] = _deep_merge(result[k], v)
-        else:
-            result[k] = v
-    return result
+load_dotenv()
 
 def load_config(config_path: str = "config.json") -> Dict[str, Any]:
-    default_config = {
+    minimal_defaults = {
         "server": {"host": "0.0.0.0", "port": 8000, "name": "Generic MCP Gateway"},
-        "endpoints": {
-            "max_parameterized_endpoints": 50,
-            "max_other_endpoints": 5,
-            "default_endpoint_limit": 10,
-            "allowed_methods": ["GET"]
-        },
-        "timeouts": {
-            "api_spec_load": 10.0,
-            "api_call": 30.0,
-            "openapi_fetch": 5.0
-        },
-        "llm": {
-            "aws_region": "us-east-2",
-            "model_id": "us.amazon.nova-pro-v1:0",
-            "enabled": True
-        },
-        "limits": {
-            "max_extract_depth": 3,
-            "max_extract_items": 10,
-            "error_message_truncate": 150,
-            "error_text_truncate": 200,
-            "max_range_size": 1000
-        },
-        "matching": {
-            "exact_match_score": 3,
-            "partial_match_score": 2
-        },
-        "mode_selection": {
-            "mode_2_keywords": ["and then", "then", "multiple", "chain"],
-        },
-        "display": {"separator_length": 60},
-        "servers_config_file": "servers.json"
+        "llm": {"enabled": False}
     }
-
-    if os.path.exists(config_path):
-        try:
-            with open(config_path, "r") as f:
-                user_cfg = json.load(f)
-                default_config = _deep_merge(default_config, user_cfg)
-        except:
-            pass
-
-    if os.getenv("AWS_REGION"):
-        default_config["llm"]["aws_region"] = os.getenv("AWS_REGION")
-
-    if os.getenv("BEDROCK_MODEL_ID"):
-        default_config["llm"]["model_id"] = os.getenv("BEDROCK_MODEL_ID")
-
-    return default_config
-
-def load_server_configs(path: str) -> List[Dict]:
-    if not os.path.exists(path):
-        return []
+    
+    if not os.path.exists(config_path):
+        print(f"Warning: {config_path} not found. Using minimal defaults.")
+        return minimal_defaults
+    
     try:
-        with open(path, "r") as f:
-            return json.load(f)
-    except:
-        return []
+        with open(config_path, "r") as f:
+            config = json.load(f)
+        
+        if os.getenv("AWS_REGION"):
+            if "llm" not in config:
+                config["llm"] = {}
+            config["llm"]["aws_region"] = os.getenv("AWS_REGION")
+        
+        if os.getenv("BEDROCK_MODEL_ID"):
+            if "llm" not in config:
+                config["llm"] = {}
+            config["llm"]["model_id"] = os.getenv("BEDROCK_MODEL_ID")
+        
+        return config
+    except Exception as e:
+        print(f"Error loading config: {e}")
+        return minimal_defaults
+
+def load_server_configs(config: Dict[str, Any]) -> List[Dict]:
+    if "servers" in config and isinstance(config["servers"], list):
+        return config["servers"]
+    
+    servers_file = config.get("servers_config_file", "servers.json")
+    if os.path.exists(servers_file):
+        try:
+            with open(servers_file, "r") as f:
+                servers_data = json.load(f)
+                if isinstance(servers_data, list):
+                    return servers_data
+                elif isinstance(servers_data, dict) and "servers" in servers_data:
+                    return servers_data["servers"]
+        except Exception as e:
+            print(f" Warning: Could not load {servers_file}: {e}")
+    
+    return []
 
 CONFIG = load_config()
 
 class ModeSelector:
-    def __init__(self, mounted_servers, server_configs, config=None):
+    def __init__(self, mounted_servers, server_configs, config=None, main_server=None):
         self.mounted_servers = mounted_servers
         self.server_configs = server_configs
         self.config = config or CONFIG
+        self.main_server = main_server
         self.classification_llm = None
         self._init_llm()
 
     def _init_llm(self):
-        if not self.config["llm"]["enabled"]:
+        if not self.config.get("llm", {}).get("enabled", False):
             return
 
-        import boto3
         try:
-            region = self.config["llm"]["aws_region"]
-            model_id = self.config["llm"]["model_id"]
+            region = self.config.get("llm", {}).get("aws_region", "us-east-2")
+            model_id = self.config.get("llm", {}).get("model_id", "us.amazon.nova-pro-v1:0")
 
             session = boto3.Session(region_name=region)
             client = session.client("bedrock-runtime", region_name=region)
@@ -115,9 +85,9 @@ class ModeSelector:
                 model_id=model_id,
                 client=client
             )
-            print("✓ Bedrock LLM Initialized")
+            print(" Bedrock LLM Initialized")
         except Exception as e:
-            print("✗ Bedrock Init Failed:", e)
+            print(" Bedrock Init Failed:", e)
             self.classification_llm = None
 
     async def _invoke_llm(self, prompt: str) -> str:
@@ -133,8 +103,8 @@ class ModeSelector:
     async def analyze_prompt(self, prompt: str) -> str:
         prompt = prompt.strip()
         prompt_lower = prompt.lower()
-        mode_cfg = self.config["mode_selection"]
-        keywords = mode_cfg["mode_2_keywords"]
+        mode_cfg = self.config.get("mode_selection", {})
+        keywords = mode_cfg.get("mode_2_keywords", ["and then", "then", "multiple", "chain"])
         
         range_pattern = r'\d+\s*(?:-|to|through|until)\s*\d+'
         quoted_list = r'"[^"]+"\s*,\s*"[^"]+"'
@@ -182,19 +152,41 @@ class ModeSelector:
             print(f"[ModeSelector] LLM error: {e}, defaulting to mode_1")
             return "mode_1"
 
-    async def handle_mode_1(self, prompt: str):
-        print("[MODE 1] Single-step API call")
+    async def _find_mcp_tool_name(self, endpoint: Dict) -> Optional[str]:
+        from workflow_core import _find_mcp_tool_name_generic
+        return _find_mcp_tool_name_generic(endpoint, self.mounted_servers, self.main_server, enable_debug=True)
 
-        from workflow_core import get_api_specs, find_matching_endpoints, execute_api_call
+    async def _call_mcp_tool(self, endpoint: Dict, prompt: str, main_server) -> Dict[str, Any]:
+        from workflow_core import _call_mcp_tool_workflow
+        return await _call_mcp_tool_workflow(endpoint, main_server)
+
+    async def handle_mode_1(self, prompt: str):
+        print("[MODE 1] Single-step MCP tool call with LLM-based endpoint selection")
+
+        from workflow_core import get_api_specs, _build_endpoint_catalog, _llm_plan_operation
 
         api_specs = await get_api_specs(self.server_configs, CONFIG)
-        endpoints = await find_matching_endpoints(prompt, api_specs, CONFIG)
-
+        
+        if not api_specs:
+            return {"success": False, "error": "No API specs loaded"}
+        
+        endpoints = _build_endpoint_catalog(api_specs, CONFIG)
+        
         if not endpoints:
-            return {"success": False, "error": "No endpoint matched"}
-
-        ep = endpoints[0]
-        result = await execute_api_call(ep, prompt, None, CONFIG)
+            return {"success": False, "error": "No endpoints found in API specs"}
+        
+        ep = await _llm_plan_operation(prompt, endpoints, CONFIG)
+        
+        if not ep:
+            return {"success": False, "error": "LLM planning failed - no endpoint selected"}
+        
+        if not self.main_server:
+            return {
+                "success": False,
+                "error": "Main server not available for MCP tool calls"
+            }
+        
+        result = await self._call_mcp_tool(ep, prompt, self.main_server)
 
         return {
             "query": prompt,
@@ -215,7 +207,8 @@ class ModeSelector:
             "query": prompt,
             "context": {
                 "servers": self.mounted_servers,
-                "server_configs": self.server_configs
+                "server_configs": self.server_configs,
+                "main_server": self.main_server
             },
             "plan": "",
             "result": None
@@ -235,7 +228,8 @@ def setup_fastmcp_server_from_openapi_spec(spec_url: str, base_url: str, name: s
     try:
         print(f"Loading API: {name}")
 
-        spec = httpx.get(spec_url, timeout=CONFIG["timeouts"]["openapi_fetch"]).json()
+        timeout = CONFIG.get("timeouts", {}).get("openapi_fetch", 5.0)
+        spec = httpx.get(spec_url, timeout=timeout).json()
 
         if not base_url.startswith("http"):
             raise ValueError("base_url must start with http:// or https://")
@@ -245,21 +239,23 @@ def setup_fastmcp_server_from_openapi_spec(spec_url: str, base_url: str, name: s
 
         client = httpx.AsyncClient(base_url=base_url)
         server = FastMCP.from_openapi(openapi_spec=spec, client=client, name=name)
+        
+        server._http_client = client
+        server._base_url = base_url
 
-        print(f"✓ Loaded {name} [{base_url}]")
+        print(f"Loaded {name} [{base_url}]")
         return server
     except Exception as e:
-        print(f"✗ Failed loading {name}: {e}")
+        print(f"Failed loading {name}: {e}")
         return None
 
 def main(config_path="config.json"):
     config = load_config(config_path)
 
-    server_cfg_path = config["servers_config_file"]
-    server_configs = load_server_configs(server_cfg_path)
+    server_configs = load_server_configs(config)
 
     if not server_configs:
-        print("✗ No servers configured.")
+        print("No servers configured.")
         return
 
     servers = []
@@ -273,29 +269,31 @@ def main(config_path="config.json"):
             servers.append(server)
 
     if not servers:
-        print("✗ No API servers loaded.")
+        print("No API servers loaded.")
         return
 
-    master_name = config["server"]["name"]
+    master_name = config.get("server", {}).get("name", "Generic MCP Gateway")
     main_server = FastMCP(name=master_name)
 
     for s in servers:
         main_server.mount(s)
+    
+    # Store servers list on main_server for later access
+    main_server._mounted_servers_list = servers
 
-    mode_selector = ModeSelector(servers, server_configs, config)
+    mode_selector = ModeSelector(servers, server_configs, config, main_server)
 
     @main_server.tool()
     async def agent_orchestrate(query: str) -> str:
-        """Master MCP Tool – Decides Mode 1 vs Mode 2"""
         result = await mode_selector.route(query)
         return json.dumps(result, indent=2)
 
-    host = config["server"]["host"]
-    port = config["server"]["port"]
-    sep = config["display"]["separator_length"]
+    host = config.get("server", {}).get("host", "0.0.0.0")
+    port = config.get("server", {}).get("port", 8000)
+    sep = config.get("display", {}).get("separator_length", 60)
 
     print("\n" + "=" * sep)
-    print(f"✓ {master_name} Ready")
+    print(f" {master_name} Ready")
     print("=" * sep)
     print(f"Listening at http://{host}:{port}")
     print("=" * sep + "\n")

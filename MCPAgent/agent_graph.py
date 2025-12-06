@@ -20,16 +20,16 @@ async def act(state: AgentState) -> Dict[str, Any]:
     from workflow_core import execute_multi_stage_workflow, CONFIG
 
     result = await execute_multi_stage_workflow(
-        state["query"],
-        state["context"]["servers"],
-        state["context"]["server_configs"],
-        CONFIG
+        query=state["query"],
+        server_configs=state["context"]["server_configs"],
+        main_server=state["context"].get("main_server"),
+        config=CONFIG
     )
 
     return {"result": result}
 
 
-graph = StateGraph(AgentState)
+graph = StateGraph(AgentState)      
 
 graph.add_node("plan", plan)
 graph.add_node("act", act)

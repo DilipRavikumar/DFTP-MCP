@@ -21,35 +21,35 @@ _llm: Optional[Any] = None
 
 def _init_llm(config: Dict = None) -> Optional[Any]:
     global _llm
-    
+
     if _llm is not None:
         return _llm
-    
+
     config = config or CONFIG
-    
+
     if not config.get("llm", {}).get("enabled", True):
         return None
-    
+
     if ChatBedrock is None:
         return None
-    
+
     try:
         import boto3
         region = config["llm"]["aws_region"]
         model_id = config["llm"]["model_id"]
-        
+
         session = boto3.Session(region_name=region)
         client = session.client("bedrock-runtime", region_name=region)
-        
+
         _llm = ChatBedrock(
             region_name=region,
             model_id=model_id,
             client=client
         )
-        print("[workflow_core] ✓ LLM initialized")
+        print("[workflow_core]  LLM initialized")
         return _llm
     except Exception as e:
-        print(f"[workflow_core] ✗ LLM init failed: {e}")
+        print(f"[workflow_core]  LLM init failed: {e}")
         return None
 
 
@@ -57,7 +57,7 @@ async def _call_llm(prompt: str, config: Dict = None) -> str:
     llm = _init_llm(config)
     if not llm:
         raise ValueError("LLM not available")
-    
+
     try:
         if hasattr(llm, "ainvoke"):
             response = await llm.ainvoke(prompt)
@@ -69,15 +69,11 @@ async def _call_llm(prompt: str, config: Dict = None) -> str:
 
 
 def _extract_base_url_from_spec(spec: Dict, configured_base_url: str) -> str:
-    if configured_base_url.startswith("http://") or configured_base_url.startswith("https://"):
+    if configured_base_url.startswith(("http://", "https://")):
         return configured_base_url.rstrip("/")
-
     servers = spec.get("servers", [])
-    if servers:
-        url = servers[0].get("url", "")
-        if url.startswith("http://") or url.startswith("https://"):
-            return url.rstrip("/")
-
+    if servers and (url := servers[0].get("url", "")).startswith(("http://", "https://")):
+        return url.rstrip("/")
     raise ValueError("No valid base_url in OpenAPI spec")
 
 
@@ -115,29 +111,19 @@ def expand_id_ranges(query: str, config: Dict = None) -> List[str]:
     max_range_size = config.get("limits", {}).get("max_range_size", 1000)
     query_lower = query.lower()
     
-    range_pattern = re.search(r'\b(\d+)\s+(?:to|through|until)\s+(\d+)\b', query_lower)
-    if range_pattern:
-        start, end = int(range_pattern.group(1)), int(range_pattern.group(2))
-        if start <= end and (end - start) <= max_range_size:
-            return [str(i) for i in range(start, end + 1)]
-    
-    until_pattern = re.search(r'\b(?:until|up\s+to)\s+(\d+)\b', query_lower)
-    if until_pattern:
-        end = int(until_pattern.group(1))
-        if end > 0 and end <= max_range_size:
-            return [str(i) for i in range(1, end + 1)]
-    
-    hyphen_range = re.search(r'\b(\d+)-(\d+)\b', query)
-    if hyphen_range:
-        start, end = int(hyphen_range.group(1)), int(hyphen_range.group(2))
-        if start <= end and (end - start) <= max_range_size:
-            return [str(i) for i in range(start, end + 1)]
+    for pattern, handler in [
+        (r'\b(\d+)\s+(?:to|through|until)\s+(\d+)\b', lambda m: range(int(m.group(1)), int(m.group(2)) + 1)),
+        (r'\b(?:until|up\s+to)\s+(\d+)\b', lambda m: range(1, int(m.group(1)) + 1)),
+        (r'\b(\d+)-(\d+)\b', lambda m: range(int(m.group(1)), int(m.group(2)) + 1))
+    ]:
+        match = re.search(pattern, query_lower if 'until' in pattern else query)
+        if match:
+            r = handler(match)
+            if 0 < len(r) <= max_range_size:
+                return [str(i) for i in r]
     
     comma_list = re.findall(r'\b(\d+)\b', query)
-    if len(comma_list) > 1 and (',' in query or ' and ' in query_lower):
-        return comma_list
-    
-    return re.findall(r'\b([0-9]+)\b', query)
+    return comma_list if len(comma_list) > 1 and (',' in query or ' and ' in query_lower) else re.findall(r'\b([0-9]+)\b', query)
 
 
 async def find_matching_endpoints(query: str, api_specs: Dict[str, Dict], config: Dict = None) -> List[Dict]:
@@ -172,7 +158,31 @@ async def find_matching_endpoints(query: str, api_specs: Dict[str, Dict], config
                 
                 score = 0
                 matched_keywords = set()
+                
+                path_params = re.findall(r'\{(\w+)\}', path)
+                path_params_lower = [p.lower() for p in path_params]
+                
+                has_id_in_query = "id" in query_words
+                has_id_param = any("id" in param.lower() for param in path_params)
+                has_id_in_operation = "id" in operation_id or "byid" in operation_id or "by_id" in operation_id
+                
+                id_bonus = 0
+                if has_id_in_query and (has_id_param or has_id_in_operation) and numbers_in_query:
+                    id_bonus = 10
+                elif (has_id_param or has_id_in_operation) and numbers_in_query:
+                    id_bonus = 5
+                
+                generic_words = {"find", "get", "search", "list", "show", "fetch", "retrieve"}
+                
+                penalty = 0
+                if numbers_in_query and has_id_in_query and not path_params:
+                    penalty = -10
+                
                 for word in query_words:
+                    if word in generic_words:
+                        if word not in operation_id:
+                            continue
+                    
                     for kw in all_keywords:
                         if kw and kw not in matched_keywords:
                             if word == kw:
@@ -184,13 +194,30 @@ async def find_matching_endpoints(query: str, api_specs: Dict[str, Dict], config
                                 matched_keywords.add(kw)
                                 break
                 
+                score += id_bonus
+                score += penalty
+                
+                if numbers_in_query and (has_id_param or has_id_in_operation) and path_params:
+                    if score <= 0:
+                        score = 15
+                    else:
+                        score += 10
+                
+                if "pet" in query_words and "pet" in path_lower and path_params and numbers_in_query:
+                    score += 5
+                
+                has_pet_in_query = "pet" in query_words
+                has_pet_in_path = "pet" in path_lower
+                has_pet_in_operation = "pet" in operation_id
+                if has_pet_in_query and has_id_in_query and (has_pet_in_path or has_pet_in_operation) and (has_id_param or has_id_in_operation) and numbers_in_query:
+                    score += 15
+                
                 if score > 0:
                     path_key = f"{base_url}{path}"
                     if path_key not in seen_paths:
                         seen_paths.add(path_key)
-                        path_params = re.findall(r'\{(\w+)\}', path)
                         
-                        if path_params and len(numbers_in_query) > 1:
+                        if path_params and len(numbers_in_query) >= 1:
                             for param_value in numbers_in_query:
                                 matched.append({
                                     "method": method.upper(),
@@ -222,52 +249,40 @@ async def find_matching_endpoints(query: str, api_specs: Dict[str, Dict], config
     id_based = [ep for ep in matched if ep.get("param_value") is not None]
     if id_based:
         other_endpoints = [ep for ep in matched if ep.get("param_value") is None]
-        return id_based[:max_id_based] + other_endpoints[:max_other] if len(id_based) <= max_id_based else id_based[:max_id_based]
+        if numbers_in_query:
+            return id_based[:max_id_based]
+        else:
+            return id_based[:max_id_based] + other_endpoints[:max_other] if len(id_based) <= max_id_based else id_based[:max_id_based]
     
     return matched[:default_limit]
 
 
 async def parse_sequential_query(query: str, config: Dict = None) -> List[str]:
     config = config or CONFIG
-    
-    prompt = f"""Parse this user query into separate sequential operations.
-
-Query: "{query}"
-
-Return ONLY a JSON array of operation strings. Example: ["Get inventory", "Get pet with ID 1"]
-
-JSON array:"""
-    
     try:
-        response = await _call_llm(prompt, config)
+        response = await _call_llm(f'Parse this user query into separate sequential operations.\n\nQuery: "{query}"\n\nReturn ONLY a JSON array of operation strings. Example: ["Get inventory", "Get pet with ID 1"]\n\nJSON array:', config)
         json_match = re.search(r'\[.*?\]', response, re.DOTALL)
-        if json_match:
-            operations = json.loads(json_match.group())
-        else:
-            operations = json.loads(response)
-        
+        operations = json.loads(json_match.group() if json_match else response)
         if isinstance(operations, list) and all(isinstance(op, str) for op in operations):
-            print(f"[workflow_core] Parsed {len(operations)} operation(s)")
             return [op.strip() for op in operations if op.strip()]
-    except Exception as e:
-        print(f"[workflow_core] LLM parsing error: {e}")
-    
+    except Exception:
+        pass
     return [query]
 
 
 def _build_endpoint_catalog(api_specs: Dict[str, Dict], config: Dict) -> List[Dict]:
     endpoints = []
-    
+
     for spec_url, data in api_specs.items():
         spec = data["spec"]
         base_url = data["base_url"]
         server_name = data["name"]
-        
+
         for path, methods in spec.get("paths", {}).items():
             for method, op in methods.items():
                 if method.upper() not in config["endpoints"]["allowed_methods"]:
                     continue
-                
+
                 path_params = re.findall(r"{(\w+)}", path)
                 query_params = []
                 for param in op.get("parameters", []):
@@ -275,14 +290,12 @@ def _build_endpoint_catalog(api_specs: Dict[str, Dict], config: Dict) -> List[Di
                         query_params.append(param.get("name"))
                 
                 request_body_schema = None
-                request_body = op.get("requestBody", {})
-                if request_body:
-                    content = request_body.get("content", {})
-                    for content_type, content_schema in content.items():
+                if request_body := op.get("requestBody", {}):
+                    for content_type, content_schema in request_body.get("content", {}).items():
                         if "json" in content_type.lower():
                             request_body_schema = content_schema.get("schema", {})
                             break
-                
+
                 endpoints.append({
                     "idx": len(endpoints),
                     "method": method.upper(),
@@ -296,7 +309,7 @@ def _build_endpoint_catalog(api_specs: Dict[str, Dict], config: Dict) -> List[Di
                     "query_params": query_params,
                     "request_body_schema": request_body_schema
                 })
-    
+
     return endpoints
 
 
@@ -344,7 +357,10 @@ Instructions:
    - Endpoint path structure and naming
    - Operation ID, summary, and description
    - Parameter requirements
-3. Extract path parameter values:
+3. IMPORTANT: If the user operation mentions an ID or specific identifier (like "pet id 1", "id 1", "pet 1"), 
+   STRONGLY prefer endpoints with path parameters (like /pet/{{petId}}) over endpoints without path parameters.
+   For example, "fetch pet id 1" should match GET /pet/{{petId}} with petId=1, NOT GET /pet/findByStatus.
+4. Extract path parameter values:
    - Identify values in the operation that map to path parameters
    - Match values to parameter names semantically
    - Preserve value types (numbers, strings, quoted text)
@@ -384,62 +400,41 @@ JSON:"""
     try:
         response = await _call_llm(prompt, config)
         
-        response = response.strip()
-        if response.startswith("```"):
-            response = re.sub(r'^```(?:json)?\s*', '', response)
-            response = re.sub(r'\s*```$', '', response)
-            response = response.strip()
-        
+        response = re.sub(r'^```(?:json)?\s*|\s*```$', '', response.strip())
         plan = None
-        
         try:
             plan = json.loads(response)
         except json.JSONDecodeError:
-            pass
-        
-        if plan is None:
-            code_block_match = re.search(r'```(?:json)?\s*(\{.*?\})\s*```', response, re.DOTALL)
-            if code_block_match:
+            if m := re.search(r'```(?:json)?\s*(\{.*?\})\s*```', response, re.DOTALL):
                 try:
-                    plan = json.loads(code_block_match.group(1))
+                    plan = json.loads(m.group(1))
                 except json.JSONDecodeError:
                     pass
-        
-        if plan is None:
-            start_idx = response.find('{')
-            if start_idx != -1:
+            if not plan and '{' in response:
+                start_idx = response.find('{')
                 brace_count = 0
-                end_idx = start_idx
                 for i in range(start_idx, len(response)):
                     if response[i] == '{':
                         brace_count += 1
                     elif response[i] == '}':
                         brace_count -= 1
                         if brace_count == 0:
-                            end_idx = i + 1
-                            break
-                
-                if end_idx > start_idx:
+                            try:
+                                plan = json.loads(response[start_idx:i+1])
+                                break
+                            except json.JSONDecodeError:
+                                pass
+            if not plan:
+                cleaned = re.sub(r'^[^{]*|[^}]*$', '', response)
+                if cleaned.startswith('{') and cleaned.endswith('}'):
                     try:
-                        json_str = response[start_idx:end_idx]
-                        plan = json.loads(json_str)
+                        plan = json.loads(cleaned)
                     except json.JSONDecodeError:
                         pass
-        
-        if plan is None:
-            cleaned = re.sub(r'^[^{]*', '', response)
-            cleaned = re.sub(r'[^}]*$', '', cleaned)
-            if cleaned.startswith('{') and cleaned.endswith('}'):
-                try:
-                    plan = json.loads(cleaned)
-                except json.JSONDecodeError:
-                    pass
-        
-        if plan is None:
+        if not plan:
             raise ValueError("Could not parse JSON from LLM response")
         
         if not isinstance(plan, dict):
-            print(f"[workflow_core] LLM returned non-dict: {type(plan)}")
             return None
         
         if plan.get("endpoint_idx") is None:
@@ -452,35 +447,107 @@ JSON:"""
             endpoint["query_params_values"] = plan.get("query_params", {})
             endpoint["body_values"] = plan.get("body", {})
             
-            endpoint["path_params_values"] = {
-                k: str(v) for k, v in endpoint["path_params_values"].items()
-            }
-            processed_query = {}
-            for k, v in endpoint["query_params_values"].items():
-                if isinstance(v, list):
-                    processed_query[k] = [str(item) for item in v]
-                else:
-                    processed_query[k] = str(v)
-            endpoint["query_params_values"] = processed_query
+            endpoint["path_params_values"] = {k: str(v) for k, v in endpoint["path_params_values"].items()}
+            endpoint["query_params_values"] = {k: [str(i) for i in v] if isinstance(v, list) else str(v) for k, v in endpoint["query_params_values"].items()}
             
-            print(f"[workflow_core] Planned: {endpoint['method']} {endpoint['path']}")
-            print(f"  Path params: {endpoint['path_params_values']}")
-            print(f"  Query params: {endpoint['query_params_values']}")
-            if endpoint.get("body_values"):
-                print(f"  Body: {json.dumps(endpoint['body_values'], indent=2)}")
             return endpoint
-        else:
-            print(f"[workflow_core] Invalid endpoint index: {idx} (valid range: 0-{len(endpoints)-1})")
-        
-    except json.JSONDecodeError as e:
-        print(f"[workflow_core] JSON decode error: {e}")
-        print(f"[workflow_core] LLM response was: {response[:200]}...")
-    except Exception as e:
-        print(f"[workflow_core] LLM planning error: {e}")
-        import traceback
-        traceback.print_exc()
-    
+    except Exception:
+        pass
+
     return None
+
+
+async def _call_mcp_tool_workflow(endpoint: Dict, main_server: FastMCP):
+    try:
+        operation_id = endpoint.get("operation_id", "")
+        path = endpoint.get("path", "")
+        method = endpoint.get("method", "GET")
+        
+        if not (tool_name := operation_id):
+            if path_parts := path.strip("/").split("/"):
+                tool_name = f"{method.lower()}{path_parts[-1].replace('{', '').replace('}', '').capitalize()}"
+        if not tool_name:
+            return {"success": False, "error": "Could not determine MCP tool name"}
+        
+        available_tool_names = []
+        try:
+            if hasattr(main_server, 'list_tools') and (all_tools := await main_server.list_tools()):
+                available_tool_names = [getattr(t, 'name', getattr(t, '__name__', str(t))) for t in all_tools]
+                for api_tool in all_tools:
+                    api_tool_name = getattr(api_tool, 'name', str(api_tool))
+                    if tool_name.lower() == api_tool_name.lower() or tool_name.lower() in api_tool_name.lower() or api_tool_name.lower() in tool_name.lower():
+                        tool_name = api_tool_name
+                        break
+        except Exception:
+            pass
+        
+        tool_args = {**endpoint.get("path_params_values", {}), **endpoint.get("query_params_values", {})}
+        if method.upper() in ["POST", "PUT"] and (body_values := endpoint.get("body_values", {})):
+            tool_args.update(body_values)
+        
+        try:
+            call_tool_method = None
+            if hasattr(main_server, 'call_tool'):
+                call_tool_method = getattr(main_server, 'call_tool')
+                if callable(call_tool_method):
+                    try:
+                        result = await call_tool_method(
+                            name=tool_name,
+                            arguments=tool_args,
+                            raise_on_error=False
+                        )
+                        
+                        if hasattr(result, 'isError') and result.isError:
+                            error_text = (result.content[0].text if hasattr(result.content[0], 'text') else str(result.content[0])) if (hasattr(result, 'content') and result.content) else ""
+                            return {"success": False, "error": error_text or "Tool execution failed"}
+                        
+                        if hasattr(result, 'structuredContent') and result.structuredContent:
+                            return {"success": True, "data": result.structuredContent}
+                        elif hasattr(result, 'content') and result.content:
+                            content_text = result.content[0].text if hasattr(result.content[0], 'text') else str(result.content[0])
+                            try:
+                                return {"success": True, "data": json.loads(content_text)}
+                            except:
+                                return {"success": True, "data": content_text}
+                        return {"success": True, "data": str(result)}
+                        
+                    except Exception as call_error:
+                        pass
+            
+            if hasattr(main_server, 'get_tools'):
+                try:
+                    tools_dict = main_server.get_tools()
+                    if asyncio.iscoroutine(tools_dict):
+                        tools_dict = await tools_dict
+                    if isinstance(tools_dict, dict):
+                        tool_obj = (tools_dict.get(tool_name) or 
+                                   next((tools_dict[k] for k in tools_dict if k.lower() == tool_name.lower()), None) or
+                                   (next((tools_dict[n] for n in available_tool_names if n in tools_dict), None) if available_tool_names else None))
+                        if tool_obj:
+                            tool_result = tool_obj.run(tool_args) if hasattr(tool_obj, 'run') else (tool_obj(**tool_args) if callable(tool_obj) else None)
+                            if asyncio.iscoroutine(tool_result):
+                                tool_result = await tool_result
+                            if tool_result:
+                                if hasattr(tool_result, 'content') and tool_result.content:
+                                    text = tool_result.content[0].text if hasattr(tool_result.content[0], 'text') else str(tool_result.content[0])
+                                    try:
+                                        return {"success": True, "data": json.loads(text)}
+                                    except:
+                                        return {"success": True, "data": text}
+                                return {"success": True, "data": str(tool_result)}
+                except Exception:
+                    pass
+            
+            error_msg = f"MCP tool '{tool_name}' not found or could not be called"
+            if available_tool_names:
+                error_msg += f". Available tools: {available_tool_names[:10]}"
+            return {"success": False, "error": error_msg}
+        
+        except Exception as tool_error:
+            return {"success": False, "error": f"MCP tool call failed: {str(tool_error)}"}
+    
+    except Exception as e:
+        return {"success": False, "error": str(e)}
 
 
 async def execute_api_call(endpoint: Dict, query: str = "", previous_data: Any = None, config: Dict = None) -> Dict[str, Any]:
@@ -494,18 +561,9 @@ async def execute_api_call(endpoint: Dict, query: str = "", previous_data: Any =
             path = path.replace(f"{{{param_name}}}", str(param_value))
         
         url = base_url.rstrip("/") + path
-        
-        query_params = endpoint.get("query_params_values", {})
-        if query_params:
-            query_parts = []
-            for param_name, param_value in query_params.items():
-                if isinstance(param_value, list):
-                    for val in param_value:
-                        query_parts.append(f"{param_name}={quote(str(val))}")
-                else:
-                    query_parts.append(f"{param_name}={quote(str(param_value))}")
+        if query_params := endpoint.get("query_params_values", {}):
+            query_parts = [f"{k}={quote(str(v))}" for k, v in query_params.items() for v in ([v] if not isinstance(v, list) else v)]
             url += "?" + "&".join(query_parts)
-        
         method = endpoint.get("method", "GET").upper()
         body_data = endpoint.get("body_values", {})
         
@@ -558,101 +616,82 @@ async def execute_api_call(endpoint: Dict, query: str = "", previous_data: Any =
         async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
             has_body = body_data is not None and body_data != {}
             headers = {"Content-Type": "application/json"} if has_body else {}
-            
-            if method == "GET":
-                response = await client.get(url)
-            elif method == "POST":
-                if has_body:
-                    response = await client.post(url, json=body_data, headers=headers)
-                else:
-                    response = await client.post(url)
-            elif method == "PUT":
-                if has_body:
-                    response = await client.put(url, json=body_data, headers=headers)
-                else:
-                    response = await client.put(url)
-            elif method == "DELETE":
-                response = await client.delete(url)
-            else:
-                response = await client.get(url)  
+            method_map = {"GET": client.get, "POST": client.post, "PUT": client.put, "DELETE": client.delete}
+            http_method = method_map.get(method, client.get)
+            response = await (http_method(url, json=body_data, headers=headers) if has_body and method in ["POST", "PUT"] else http_method(url))
             
             if response.status_code == 200:
                 try:
                     return {"success": True, "data": response.json()}
                 except:
                     return {"success": True, "data": response.text}
-            else:
-                error_text_truncate = config.get("limits", {}).get("error_text_truncate", 200)
-                error_msg_truncate = config.get("limits", {}).get("error_message_truncate", 150)
-                error_text = response.text[:error_text_truncate] if response.text else ""
-                return {"success": False, "error": f"HTTP {response.status_code}: {error_text}"}
+            error_text_truncate = config.get("limits", {}).get("error_text_truncate", 200)
+            error_text = (response.text[:error_text_truncate] if response.text else "")
+            return {"success": False, "error": f"HTTP {response.status_code}: {error_text}"}
     except Exception as e:
         error_msg_truncate = config.get("limits", {}).get("error_message_truncate", 150)
         return {"success": False, "error": str(e)[:error_msg_truncate]}
 
 
-async def execute_multi_stage_workflow(query: str, mounted_servers: List[FastMCP],
-                                       server_configs: List[Dict], config: Dict = None) -> Dict[str, Any]:
+async def execute_multi_stage_workflow(query: str, server_configs: List[Dict],
+                                       main_server: Optional[FastMCP] = None,
+                                       config: Optional[Dict] = None) -> Dict[str, Any]:
     config = config or CONFIG
     
-    results = {
-        "query": query,
-        "stages": [],
-        "final_result": None,
-        "errors": []
-    }
+    error_response = lambda msg: {"query": query, "endpoint": None, "method": None, "server": None, "result": {"success": False, "error": msg}}
+    if not main_server:
+        return error_response("No main_server provided - MCP tools require FastMCP instance")
     
-    api_specs = await get_api_specs(server_configs, config)
-    if not api_specs:
-        results["final_result"] = {"summary": "No API specs loaded"}
-        return results
-    
-    endpoints = _build_endpoint_catalog(api_specs, config)
-    if not endpoints:
-        results["final_result"] = {"summary": "No endpoints found"}
-        return results
-    
-    operations = await parse_sequential_query(query, config)
-    
-    combined_data = []
-    previous_data = None
-    
-    for stage_num, operation in enumerate(operations, 1):
-        planned_endpoint = await _llm_plan_operation(operation, endpoints, config)
+    try:
+        if not (api_specs := await get_api_specs(server_configs, config)):
+            return error_response("No API specs loaded")
+        if not (endpoints := _build_endpoint_catalog(api_specs, config)):
+            return error_response("No endpoints found in API specs")
         
-        if not planned_endpoint:
-            results["stages"].append({
-                "stage": stage_num,
+        operations = await parse_sequential_query(query, config)
+        
+        stages = []
+        combined_data = []
+        previous_data = None
+        
+        for i, operation in enumerate(operations):
+            ep = await _llm_plan_operation(operation, endpoints, config)
+            if not ep:
+                stages.append({
+                    "stage": i + 1,
+                    "operation": operation,
+                    "endpoint": None,
+                    "status": "failed",
+                    "error": "LLM planning failed - no endpoint selected"
+                })
+                continue
+            
+            result = await _call_mcp_tool_workflow(ep, main_server)
+            
+            stage_result = {
+                "stage": i + 1,
                 "operation": operation,
-                "status": "failed",
-                "result": {"success": False, "error": "No matching endpoint found"}
-            })
-            results["errors"].append(f"Operation '{operation}': No matching endpoint")
-            continue
+                "endpoint": ep["path"],
+                "method": ep["method"],
+                "server": ep["server_name"],
+                "status": "success" if result.get("success") else "failed",
+                "data": result.get("data"),
+                "error": result.get("error")
+            }
+            stages.append(stage_result)
+            
+            if result.get("success") and result.get("data"):
+                combined_data.append(result["data"])
+                previous_data = result["data"]
         
-        result = await execute_api_call(planned_endpoint, operation, previous_data, config)
-        
-        results["stages"].append({
-            "stage": stage_num,
-            "operation": operation,
-            "endpoint": planned_endpoint["path"],
-            "api": planned_endpoint["server_name"],
-            "status": "completed" if result["success"] else "failed",
-            "result": result
-        })
-        
-        if result["success"]:
-            combined_data.append(result["data"])
-            previous_data = result["data"]
-        else:
-            results["errors"].append(f"Operation '{operation}': {result.get('error', 'Unknown error')}")
-    
-    results["final_result"] = {
-        "combined": True,
-        "execution_mode": "sequential",
-        "success_count": len(combined_data),
-        "failed_count": len(results["stages"]) - len(combined_data),
-        "results": combined_data
-    }
-    
-    return results
+        failed_stages = [s for s in stages if s["status"] == "failed"]
+        return {"query": query, "endpoint": None, "method": None, "server": None, "result": {
+            "success": len(failed_stages) == 0,
+            "stages": stages,
+            "stages_completed": len([s for s in stages if s["status"] == "success"]),
+            "stages_failed": len(failed_stages),
+            "combined_data": combined_data if combined_data else None,
+            "error": f"{len(failed_stages)} stage(s) failed" if failed_stages else None
+        }}
+    except Exception as e:
+        return error_response(str(e))

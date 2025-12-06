@@ -8,7 +8,7 @@
     "max_parameterized_endpoints": 50,
     "max_other_endpoints": 50,
     "default_endpoint_limit": 50,
-    "allowed_methods": ["GET","POST","PUT"]
+    "allowed_methods": ["GET", "POST", "PUT"]
   },
   "timeouts": {
     "api_spec_load": 10.0,
@@ -25,18 +25,24 @@
     "max_extract_items": 10,
     "error_message_truncate": 150,
     "error_text_truncate": 200,
-    "max_range_size": 1000
+    "max_range_size": 1000,
+    "parallel_batch_size": 10
   },
   "matching": {
     "exact_match_score": 3,
     "partial_match_score": 2
   },
   "mode_selection": {
-    "mode_2_keywords": ["and then", "then", "multiple", "chain"]
+    "mode_2_keywords": ["and then", "then", "multiple", "chain", "workflow", "mode2"]
   },
   "display": {
     "separator_length": 60
   },
-  "servers_config_file": "servers.json"
+  "servers": [
+    {
+      "name": "Petstore",
+      "spec_url": "https://petstore3.swagger.io/api/v3/openapi.json",
+      "base_url": "https://petstore3.swagger.io/api/v3"
+    }
+  ]
 }
-
