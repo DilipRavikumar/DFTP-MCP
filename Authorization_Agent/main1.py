@@ -1,12 +1,19 @@
-
 import sys
 from build import build_graph
 
 if len(sys.argv) < 2:
-    sys.exit()
+    print("Error: Please provide a prompt as an argument")
+    print("Usage: python main1.py <prompt>")
+    sys.exit(1)
 
 user_prompt = " ".join(sys.argv[1:])
-app = build_graph()
-final_state = app.invoke({"prompt": user_prompt})
+print(f"Processing prompt: {user_prompt}\n")
 
-print(final_state["result"])
+try:
+    app = build_graph()
+    final_state = app.invoke({"prompt": user_prompt})
+    print("\n" + "="*50)
+    print(final_state["result"])
+except Exception as e:
+    print(f"Error: {e}")
+    sys.exit(1)

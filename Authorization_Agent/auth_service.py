@@ -1,4 +1,4 @@
-def get_role_from_token(token: str) -> str:
+def get_scope_from_token(token: str) -> str:
     if token.startswith("LIC_"):
         return "LIC"
     elif token.startswith("MF_"):

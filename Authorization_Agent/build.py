@@ -1,20 +1,26 @@
 from langgraph.graph import StateGraph, END
-from agents import llm_agent
+from agents import MCPAgent_Node, extract_token_and_scope
 from typing import TypedDict, Optional
+from schema import State
 
-class State(TypedDict):
-    prompt: str
-    result: Optional[str]
 
-def build_graph():
+def authorization_node(state: State) -> State: 
+    _, scope = extract_token_and_scope(state["prompt"])
+    print(f"Extracted scope: {scope}")
+    return {**state, "scope": scope}
+
+def mcp_agent_node_wrapper(state: State) -> State:
+    new_result = MCPAgent_Node(state) 
+    print("MCP Node: Request Processed")
+    return new_result
+
+def build_graph() -> StateGraph:
     graph = StateGraph(State)
+    graph.add_node("authorization_node", authorization_node)
+    graph.add_node("mcp_agent_node", mcp_agent_node_wrapper)
 
-    def router_node(state: State) -> State:
-        result = llm_agent(state["prompt"])
-        return {**state, "result": result}
-
-    graph.add_node("router", router_node)
-    graph.set_entry_point("router")
-    graph.add_edge("router", END)
+    graph.set_entry_point("authorization_node")
+    graph.add_edge("authorization_node", "mcp_agent_node")
+    graph.add_edge("mcp_agent_node", END)
 
     return graph.compile()
