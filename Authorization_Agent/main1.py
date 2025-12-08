@@ -17,3 +17,5 @@ try:
 except Exception as e:
     print(f"Error: {e}")
     sys.exit(1)
+
+#example usage: python Authorization_Agent/main1.py  "token:LIC_, request: get status of Mutual Funds"                        
