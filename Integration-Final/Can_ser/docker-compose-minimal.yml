@@ -1,0 +1,51 @@
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15-alpine
+    container_name: can_ser_postgres
+    environment:
+      POSTGRES_DB: canonical_db
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: root@123
+      PGDATA: /var/lib/postgresql/data/pgdata
+    ports:
+      - "15432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init-scripts:/docker-entrypoint-initdb.d
+    networks:
+      - can_ser_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d canonical_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # Redis for Status Streaming
+  redis:
+    image: redis:7-alpine
+    container_name: can_ser_redis
+    ports:
+      - "16379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - can_ser_network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+
+networks:
+  can_ser_network:
+    driver: bridge
+    name: can_ser_network
