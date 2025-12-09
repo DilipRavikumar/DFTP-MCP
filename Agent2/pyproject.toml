@@ -1,0 +1,19 @@
+[project]
+name = "agent2"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "boto3>=1.42.5",
+    "fastmcp>=2.13.3",
+    "httpx>=0.28.1",
+    "langchain-aws>=1.1.0",
+    "langchain-core>=1.1.2",
+    "langchain-mcp-adapters>=0.1.14",
+    "langgraph>=1.0.4",
+    "pydantic>=2.12.5",
+    "python-dotenv>=1.2.1",
+    "typing-extensions>=4.15.0",
+    "uvicorn>=0.38.0",
+]
