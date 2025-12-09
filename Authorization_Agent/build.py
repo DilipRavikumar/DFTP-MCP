@@ -1,16 +1,16 @@
 from langgraph.graph import StateGraph, END
 from agents import MCPAgent_Node, extract_token_and_scope
-from typing import TypedDict, Optional
 from schema import State
 
-
-def authorization_node(state: State) -> State: 
-    _, scope = extract_token_and_scope(state["prompt"])
+def authorization_node(state: State) -> State:
+    token, scope, roles = extract_token_and_scope(state["prompt"])
     print(f"Extracted scope: {scope}")
-    return {**state, "scope": scope}
+    print(f"Extracted roles: {roles}")
+
+    return {**state, "token": token, "scope": scope, "roles": roles}
 
 def mcp_agent_node_wrapper(state: State) -> State:
-    new_result = MCPAgent_Node(state) 
+    new_result = MCPAgent_Node(state)
     print("MCP Node: Request Processed")
     return new_result
 
