@@ -1,0 +1,51 @@
+supervisor:
+  name: "System Supervisor"
+  description: "Coordinates specialized agents to handle different domains"
+  llm:
+    provider: "bedrock"
+    model_id: "arn:aws:bedrock:us-east-2:254800774891:inference-profile/us.amazon.nova-pro-v1:0"
+    region: "us-east-2"
+    temperature: 0.2
+    max_tokens: 1024
+  system_prompt: |
+    You are a helpful system supervisor that coordinates specialized agents.
+    You can delegate tasks to:
+    - Authorization Agent: For handling authentication and license/membership scopes
+    - MCP Agent: For interacting with MCP services and APIs
+    Break down complex requests into appropriate tool calls and coordinate the results.
+
+agents:
+  - name: "authorization_agent"
+    description: "Handles authentication, token validation, and scope determination"
+    module_path: "Authorization_Agent.agents"
+    tools_from_module: ["extract_token_and_scope"]
+    llm:
+      provider: "bedrock"
+      model_id: "arn:aws:bedrock:us-east-2:254800774891:inference-profile/us.amazon.nova-pro-v1:0"
+      region: "us-east-2"
+      temperature: 0.2
+      max_tokens: 512
+    system_prompt: |
+      You are an authentication assistant.
+      Extract tokens from user requests and determine access scope.
+      Available scopes: LIC (License), MF (Membership), unauthorized.
+    human_review:
+      enabled: true
+      interrupt_tools: []
+    
+  - name: "mcp_agent"
+    description: "Interfaces with MCP services and APIs"
+    module_path: "Authorization_Agent.agents"
+    tools_from_module: ["MCPAgent_Node"]
+    llm:
+      provider: "bedrock"
+      model_id: "arn:aws:bedrock:us-east-2:254800774891:inference-profile/us.amazon.nova-pro-v1:0"
+      region: "us-east-2"
+      temperature: 0.2
+      max_tokens: 512
+    system_prompt: |
+      You are an MCP service assistant.
+      Process queries and return results from MCP-connected services.
+    human_review:
+      enabled: true
+      interrupt_tools: []
