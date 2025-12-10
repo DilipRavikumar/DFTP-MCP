@@ -1,0 +1,59 @@
+supervisor:
+  name: "System Supervisor"
+  description: "Coordinates specialized agents to handle different domains"
+  llm:
+    provider: "bedrock"
+    model_id: "us.amazon.nova-pro-v1:0"
+    region: "us-east-2"
+    temperature: 0.2
+    max_tokens: 1024
+  system_prompt: |
+    You are a helpful system supervisor that coordinates specialized agents.
+    You can delegate tasks to:
+    Break down complex requests into appropriate tool calls and coordinate the results.
+
+agents:
+  - name: "order_ingestion_agent"
+    description: "Handles file uploads and trade simulations. Use when user wants to upload files, check file existence, or run trade simulations."
+    module_path: "Order_Ingestion_Agent.agent2.TradeSimulateSpecific"
+    tools_from_module: ["process_request"]
+    llm:
+      provider: "bedrock"
+      model_id: "us.amazon.nova-pro-v1:0"
+      region: "us-east-2"
+      temperature: 0.1
+      max_tokens: 512
+    system_prompt: |
+      You are an order ingestion assistant.
+      Delegate requests related to file checking, uploading, or simulating trades to the process_request tool.
+
+  - name: "order_details_agent"
+    description: "Handles general trade order details and routing. Use for general trade inquiries and order management."
+    module_path: "Order_Details_Agent.agent1.TradeGeneralAgent"
+    tools_from_module: ["process_request"]
+    llm:
+      provider: "bedrock"
+      model_id: "us.amazon.nova-pro-v1:0"
+      region: "us-east-2"
+      temperature: 0.1
+      max_tokens: 512
+    system_prompt: |
+      You are an order details assistant.
+      Delegate general trade inquiries to the process_request tool.
+
+  - name: "position_agent"
+    description: "Calculates positions and deals with funds/NAVs. Use for calculating positions, submitting orders with fund numbers, etc."
+    module_path: "Position_Agent.src.position.main"
+    tools_from_module: ["process_request", "submit_order", "get_nav", "calculate_position"]
+    llm:
+      provider: "bedrock"
+      model_id: "us.amazon.nova-pro-v1:0"
+      region: "us-east-2"
+      temperature: 0.1
+      max_tokens: 512
+    system_prompt: |
+      You are a position calculation assistant.
+      Delegate complex workflows to "process_request".
+      Use "submit_order" to directly submit an order.
+      Use "get_nav" to directly fetch NAV data.
+      Use "calculate_position" to directly calculate a position if you have order/nav JSON.
