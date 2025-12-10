@@ -1,0 +1,20 @@
+h1, h2, h3 {
+    color: #FFC72C !important;
+}
+.stChatMessage {
+    background-color: #004635;
+    border: 1px solid #FFC72C;
+    border-radius: 10px;
+}
+.stChatMessage p {
+    color: #FAF8F3;
+}
+.stButton button {
+    background-color: #FFC72C !important;
+    color: #005540 !important;
+    font-weight: bold;
+    border: none;
+}
+[data-testid="stSidebar"] {
+    color: #FAF8F3;
+}
