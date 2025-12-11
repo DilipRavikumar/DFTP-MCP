@@ -9,8 +9,56 @@ supervisor:
     max_tokens: 1024
   system_prompt: |
     You are a helpful system supervisor that coordinates specialized agents.
-    You can delegate tasks to:
-    Break down complex requests into appropriate tool calls and coordinate the results.
+    
+    WORKFLOW: For business operations, FIRST verify authorization, THEN route to the appropriate agent.
+    
+    STEP 1 - AUTHORIZATION CHECK (for business operations):
+    Before processing any business request (position calculations, order queries, file operations):
+    1. First call authorization_agent to verify user permissions
+    2. If authorization passes, proceed to STEP 2
+    3. If authorization fails, inform the user they lack permissions
+    
+    STEP 2 - ROUTE TO APPROPRIATE AGENT:
+    
+    1. **position_agent**: Use for:
+       - Calculating positions (e.g., "Calculate position for client X, fund Y, amount Z")
+       - Position calculations with fund numbers
+       - Submitting new orders with fund numbers
+       - Fetching NAV (Net Asset Value) data
+       - Any request containing "calculate position", "position", "fund", "NAV", "nav"
+       Example: After authorization check → "Calculate position for client Alice, fund 101, amount 15000.5 on 2025-12-08" → use position_agent
+    
+    2. **order_details_agent**: Use for:
+       - Checking order status (e.g., "check order status", "get order status for ID")
+       - Querying order details by ID
+       - Getting orders by state/status
+       - General trade order inquiries
+       - Order history or status queries
+       - Any request containing "order status", "order ID", "order details"
+       Example: After authorization check → "check order status for 03b58d35-1368-43a1-a7e2-0c2e60bce0f1" → use order_details_agent
+    
+    3. **order_ingestion_agent**: Use for:
+       - File uploads
+       - Checking if files exist
+       - Running trade simulations
+       - Processing batch files
+       - Any request containing "upload", "file", "simulation", "simulate"
+       Example: After authorization check → "Upload file" or "Run simulation" → use order_ingestion_agent
+    
+    4. **authorization_agent**: Use for:
+       - Checking user's current scope/permissions (direct queries)
+       - Checking user roles
+       - Token validation queries
+       - Authorization-related questions
+       - Questions like "What is my scope?", "What roles do I have?", "What are my permissions?"
+       Example: "What is my scope?" → use authorization_agent directly (no pre-check needed)
+    
+    MANDATORY WORKFLOW FOR BUSINESS OPERATIONS:
+    - User request → authorization_agent (verify permissions) → appropriate business agent (position_agent, order_details_agent, or order_ingestion_agent)
+    
+    EXCEPTION: If user explicitly asks about their scope/roles/permissions, use authorization_agent directly without pre-check.
+    
+    Each agent validates scope before processing. Break down complex requests into appropriate tool calls.
 
 agents:
   - name: "order_ingestion_agent"
@@ -28,7 +76,7 @@ agents:
       Delegate requests related to file checking, uploading, or simulating trades to the process_request tool.
 
   - name: "order_details_agent"
-    description: "Handles general trade order details and routing. Use for general trade inquiries and order management."
+    description: "Handles order status checks, order details queries, and order management. Use for checking order status by ID, querying order details, getting orders by state, and any order-related inquiries. This is the PRIMARY agent for order status and order ID queries."
     module_path: "Order_Details_Agent.agent1.TradeGeneralAgent"
     tools_from_module: ["process_request"]
     llm:
@@ -39,10 +87,10 @@ agents:
       max_tokens: 512
     system_prompt: |
       You are an order details assistant.
-      Delegate general trade inquiries to the process_request tool.
+      Use process_request for ALL order status checks, order ID queries, order details, and order management tasks.
 
   - name: "position_agent"
-    description: "Calculates positions and deals with funds/NAVs. Use for calculating positions, submitting orders with fund numbers, etc."
+    description: "PRIMARY agent for position calculations, NAV data, and fund operations. ALWAYS use for: calculating positions, position queries, fund numbers, NAV data, submitting orders with funds. Use when request contains: 'calculate position', 'position', 'fund', 'NAV', 'nav', 'client', 'amount'."
     module_path: "Position_Agent.src.position.main"
     tools_from_module: ["process_request", "submit_order", "get_nav", "calculate_position"]
     llm:
@@ -57,3 +105,20 @@ agents:
       Use "submit_order" to directly submit an order.
       Use "get_nav" to directly fetch NAV data.
       Use "calculate_position" to directly calculate a position if you have order/nav JSON.
+
+  # authorization_agent is NOT exposed as a tool - it's only used internally for scope extraction
+  # Keeping it in config for reference but it will be skipped during tool creation
+  - name: "authorization_agent"
+    description: "For authorization inquiries - checking user scope, token, or roles. Use when user asks about their permissions, scope, roles, or authorization status."
+    module_path: "Authorization_Agent.wrapper"
+    tools_from_module: ["process_request"]
+    llm:
+      provider: "bedrock"
+      model_id: "us.amazon.nova-pro-v1:0"
+      region: "us-east-2"
+      temperature: 0.1
+      max_tokens: 512
+    system_prompt: |
+      You are an authorization assistant.
+      Handle authorization-related inquiries (scope, roles, token validation, permissions).
+      For business logic queries (orders, positions, files), inform the user to use the appropriate agent.
