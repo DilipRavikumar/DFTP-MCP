@@ -35,7 +35,7 @@ agents:
 
   - name: "order_details_agent"
     description: "MANDATORY TOOL: Use for ALL order status queries AND order ID lookups (e.g. 'state of order', 'status for ID'). Returns real data. Use for: checking order status by ID, querying order details, getting orders by state. DO NOT use position_agent for this."
-    module_path: "Order_Details_Agent.agent1.TradeGeneralAgent"
+    module_path: "Order_Details_Agent.agent1"
     tools_from_module: ["process_request"]
     llm:
       provider: "bedrock"

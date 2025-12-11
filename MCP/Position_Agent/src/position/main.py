@@ -581,6 +581,8 @@ def validate_scope(scope: str) -> bool:
 # Supervisor entry point
 def process_request(request: str) -> str:
     """Entry point for Supervisor Agent."""
+    print(f"[POSITION_AGENT] process_request called from {__file__}")
+    
     # Extract scope from request
     scope, actual_request = extract_scope_from_request(request)
     

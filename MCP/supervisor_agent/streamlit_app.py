@@ -236,6 +236,70 @@ for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
 
+# File Upload Section (in chat area)
+st.divider()
+with st.expander("📤 Upload File", expanded=False):
+    st.caption("Upload files for trade simulation (CSV, ZIP, TXT, JSON, XML, DAT)")
+    
+    uploaded_file = st.file_uploader(
+        "Choose a file",
+        type=["csv", "zip", "txt", "json", "xml", "dat"],
+        key="file_uploader"
+    )
+    
+    if uploaded_file is not None:
+        col1, col2 = st.columns([3, 1])
+        with col1:
+            st.info(f"📄 **{uploaded_file.name}** ({uploaded_file.size / 1024:.2f} KB)")
+        with col2:
+            if st.button("Upload", type="primary", key="upload_btn"):
+                try:
+                    # Create files directory if it doesn't exist
+                    files_dir = os.path.join(os.path.dirname(__file__), "..", "files")
+                    os.makedirs(files_dir, exist_ok=True)
+                    
+                    # Save the uploaded file
+                    file_path = os.path.join(files_dir, uploaded_file.name)
+                    with open(file_path, "wb") as f:
+                        f.write(uploaded_file.getbuffer())
+                    
+                    # Send request to order_ingestion_agent via chat
+                    upload_request = f"upload {uploaded_file.name}"
+                    
+                    # Add to session state messages
+                    st.session_state.messages.append({
+                        "role": "user", 
+                        "content": f"📤 Uploading file: {uploaded_file.name}"
+                    })
+                    
+                    # Process through supervisor
+                    with st.spinner("Processing file upload..."):
+                        supervisor = get_supervisor_with_invalidation()
+                        config = {"configurable": {"thread_id": st.session_state.thread_id}}
+                        
+                        response_text = ""
+                        for params in supervisor.stream(
+                            {"messages": [{"role": "user", "content": upload_request}]},
+                            config,
+                        ):
+                            for node_name, update in params.items():
+                                if "messages" in update:
+                                    last_msg = update["messages"][-1]
+                                    if hasattr(last_msg, "content") and last_msg.type == "ai":
+                                        response_text = last_msg.content
+                        
+                        st.session_state.messages.append({
+                            "role": "assistant",
+                            "content": response_text or f"✅ File {uploaded_file.name} uploaded successfully"
+                        })
+                        
+                        st.success(f"✅ File {uploaded_file.name} processed!")
+                        st.rerun()
+                        
+                except Exception as e:
+                    st.error(f"❌ Upload failed: {str(e)}")
+st.divider()
+
 # Chat input
 if prompt := st.chat_input("Ask the supervisor agent... (connects to all specialized agents)"):
     st.session_state.messages.append({"role": "user", "content": prompt})

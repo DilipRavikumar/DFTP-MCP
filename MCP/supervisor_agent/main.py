@@ -60,6 +60,8 @@ class AgentToolFactory:
         functions = {}
         for name in function_names:
             if not hasattr(module, name):
+                print(f"DEBUG: Module {module} path: {getattr(module, '__file__', 'unknown')}", flush=True)
+                print(f"DEBUG: Available attributes: {dir(module)}", flush=True)
                 raise AttributeError(f"Function '{name}' not found in module")
             functions[name] = getattr(module, name)
         return functions
@@ -194,51 +196,64 @@ class SupervisorAgentBuilder:
             # process_request is typically the main entry point for LangGraph-based agents
             # and handles the full workflow internally, so we don't need a sub-agent wrapper
             if "process_request" in tool_names:
+                print(f"DEBUG: Loading module {module_path} for agent {agent_name}", flush=True)
                 module = AgentToolFactory.load_module(module_path)
+                print(f"DEBUG: Module loaded: {module}, file: {getattr(module, '__file__', 'unknown')}", flush=True)
+                
                 if hasattr(module, "process_request"):
                     func = getattr(module, "process_request")
+                    print(f"DEBUG: Got process_request function: {func}, from module: {func.__module__}", flush=True)
+                    
+                    # Create a factory function to properly capture the func and agent_name in separate closures
+                    # This prevents Python from reusing the same function reference
+                    def create_tool_for_agent(agent_func, agent_name_param, allowed_scopes_param):
+                        @tool
+                        def direct_agent_tool(request: str) -> str:
+                            """Invoke specialized agent for domain-specific task."""
+                            try:
+                                print(f"DEBUG TOOL CALL: Agent tool called for {agent_name_param}, using func from {agent_func.__module__}", flush=True)
+                                
+                                # Get current scope
+                                current_scope_info = get_user_scope()
+                                current_scope = current_scope_info.get("scope", "unauthorized")
+                                
+                                # Check if scope is allowed for this agent
+                                if current_scope not in allowed_scopes_param and current_scope != "unauthorized":
+                                    return f"Unauthorized: Scope '{current_scope}' is not allowed for {agent_name_param}. Required scopes: {', '.join(allowed_scopes_param)}"
+                                
+                                # Pass scope info in request (agents can extract it)
+                                # Format: "SCOPE:{scope}|ROLES:{roles}|REQUEST:{actual_request}"
+                                scope_payload = f"SCOPE:{current_scope}|ROLES:{','.join(current_scope_info.get('roles', []))}|REQUEST:{request}"
+                                result = agent_func(scope_payload)
+                                
+                                # STRICT OUTPUT WRAPPER (Restored)
+                                result_str = str(result)
+                                if not result_str or result_str == "None":
+                                    return "TOOL_ERROR: No data returned from tool."
+                                    
+                                return (
+                                    f"DATA_FROM_TOOL_START\n"
+                                    f"{result_str}\n"
+                                    f"DATA_FROM_TOOL_END\n\n"
+                                    f"INSTRUCTION: The above data is the COMPLETE and ONLY truth. "
+                                    f"Return it EXACTLY as is. "
+                                    f"Do NOT add any fund names, investor names, dates, or details not present above. "
+                                    f"If the data is sparse (e.g. only ID and status), return ONLY ID and status."
+                                )
+                            except Exception as e:
+                                import traceback
+                                return f"Error in {agent_name_param}: {str(e)}\n{traceback.format_exc()}"
+                        
+                        direct_agent_tool.name = agent_name_param
+                        direct_agent_tool.description = agent_config.get("description", f"Delegates to {agent_name_param} for domain-specific tasks.")
+                        return direct_agent_tool
+                    
                     # Store agent_name and allowed_scopes in closure
                     allowed_scopes = scope_mappings.get(agent_name, [])
                     
-                    # Create a direct tool wrapper for process_request with scope checking
-                    @tool
-                    def direct_agent_tool(request: str) -> str:
-                        """Invoke specialized agent for domain-specific task."""
-                        try:
-                            # Get current scope
-                            current_scope_info = get_user_scope()
-                            current_scope = current_scope_info.get("scope", "unauthorized")
-                            
-                            # Check if scope is allowed for this agent
-                            if current_scope not in allowed_scopes and current_scope != "unauthorized":
-                                return f"Unauthorized: Scope '{current_scope}' is not allowed for {agent_name}. Required scopes: {', '.join(allowed_scopes)}"
-                            
-                            # Pass scope info in request (agents can extract it)
-                            # Format: "SCOPE:{scope}|ROLES:{roles}|REQUEST:{actual_request}"
-                            scope_payload = f"SCOPE:{current_scope}|ROLES:{','.join(current_scope_info.get('roles', []))}|REQUEST:{request}"
-                            result = func(scope_payload)
-                            
-                            # STRICT OUTPUT WRAPPER (Restored)
-                            result_str = str(result)
-                            if not result_str or result_str == "None":
-                                return "TOOL_ERROR: No data returned from tool."
-                                
-                            return (
-                                f"DATA_FROM_TOOL_START\n"
-                                f"{result_str}\n"
-                                f"DATA_FROM_TOOL_END\n\n"
-                                f"INSTRUCTION: The above data is the COMPLETE and ONLY truth. "
-                                f"Return it EXACTLY as is. "
-                                f"Do NOT add any fund names, investor names, dates, or details not present above. "
-                                f"If the data is sparse (e.g. only ID and status), return ONLY ID and status."
-                            )
-                        except Exception as e:
-                            import traceback
-                            return f"Error in {agent_name}: {str(e)}\n{traceback.format_exc()}"
-                    
-                    direct_agent_tool.name = agent_name
-                    direct_agent_tool.description = agent_config.get("description", f"Delegates to {agent_name} for domain-specific tasks.")
-                    self.supervisor_tools.append(direct_agent_tool)
+                    # Create the tool using the factory to ensure proper closure
+                    tool_instance = create_tool_for_agent(func, agent_name, allowed_scopes)
+                    self.supervisor_tools.append(tool_instance)
                     # Skip sub-agent creation when process_request is available
                     continue
             

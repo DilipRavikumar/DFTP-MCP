@@ -31,7 +31,7 @@ try:
 except Exception:
     pass
 
-MCP_GATEWAY_URL = os.environ.get("MCP_GATEWAY_URL", "http://127.0.0.1:8003/mcp")
+MCP_GATEWAY_URL = os.environ.get("MCP_GATEWAY_URL", "http://127.0.0.1:8000/mcp")
 MCP_GATEWAY_TRANSPORT = os.environ.get("MCP_GATEWAY_TRANSPORT", "streamable_http")
 ROUTER_MODEL_ID = os.environ.get("ROUTER_MODEL_ID", "us.amazon.nova-pro-v1:0")
 AWS_REGION = os.environ.get("AWS_REGION", "us-east-2")
@@ -322,37 +322,32 @@ def build_check_and_upload_graph(router_model, mcp_tools):
     return agent
 
 
-# Scope validation for Order Ingestion Agent
 ALLOWED_SCOPES = ["MutualFunds", "Assets", "ACCOUNT_MANAGER"]
 
-def extract_scope_from_request(request: str) -> tuple:
-    """Extract scope and actual request from formatted payload.
-    Format: "SCOPE:{scope}|ROLES:{roles}|REQUEST:{actual_request}"
-    Returns: (scope, actual_request)
-    """
-    if request.startswith("SCOPE:"):
+def extract_scope_from_request(request: str) -> tuple[str, str]:
+    """Helper to extract scope from request string if present."""
+    scope = "unknown"
+    actual_request = request
+    
+    if "SCOPE:" in request and "|REQUEST:" in request:
         try:
-            parts = request.split("|REQUEST:", 1)
-            if len(parts) == 2:
-                scope_part = parts[0].replace("SCOPE:", "")
-                # Extract just the scope (before |ROLES: if present)
-                if "|ROLES:" in scope_part:
-                    scope = scope_part.split("|ROLES:")[0]
-                else:
-                    scope = scope_part
-                actual_request = parts[1]
-                return scope, actual_request
+            parts = request.split("|")
+            for part in parts:
+                if part.startswith("SCOPE:"):
+                    scope = part.replace("SCOPE:", "").strip()
+                elif part.startswith("REQUEST:"):
+                    actual_request = part.replace("REQUEST:", "").strip()
         except:
             pass
-    # If not formatted, return unauthorized and original request
-    return "unauthorized", request
+            
+    return scope, actual_request
 
 def validate_scope(scope: str) -> bool:
     """Check if scope is allowed for Order Ingestion Agent."""
     return scope in ALLOWED_SCOPES
 
 def process_request(request: str) -> str:
-    """Entry point for Supervisor Agent."""
+    """Entry point for Supervisor Agent to interact with Order Ingestion Agent."""
     # Extract scope from request
     scope, actual_request = extract_scope_from_request(request)
     
@@ -360,34 +355,43 @@ def process_request(request: str) -> str:
     if not validate_scope(scope):
         return f"Unauthorized: Scope '{scope}' is not allowed for Order Ingestion Agent. Required scopes: {', '.join(ALLOWED_SCOPES)}"
     
+    # Build MCP client and get tools
     mcp_tools = []
     try:
         client = build_mcp_client()
+        
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         
         async def get_tools_safe():
-            return await client.get_tools()
+            try:
+                return await client.get_tools()
+            except Exception as e:
+                print(f"Error getting tools: {e}")
+                return []
 
         try:
-             mcp_tools = loop.run_until_complete(asyncio.wait_for(get_tools_safe(), timeout=2.0))
+            mcp_tools = loop.run_until_complete(asyncio.wait_for(get_tools_safe(), timeout=2.0))
         except asyncio.TimeoutError:
-             print("Warning: MCP tool retrieval timed out in Order Ingestion Agent. Proceeding with no tools.")
+            print("Warning: MCP tool retrieval timed out in Order Ingestion Agent. Proceeding with no tools.")
         finally:
             loop.close()
     except Exception as e:
         print(f"Warning initializing MCP tools in Order Ingestion Agent: {e}")
+        return f"Error: Could not initialize MCP tools: {e}"
 
-
+    # Build router model
     router_model = ChatBedrock(
         model_id=ROUTER_MODEL_ID,
         region_name=AWS_REGION,
     )
 
+    # Build and compile the graph
     agent = build_check_and_upload_graph(router_model, mcp_tools)
     
+    # Initialize state
     init_state: CheckUploadState = {
-        "user_input": actual_request,  # Use the actual request without scope prefix
+        "user_input": actual_request,
         "file_path": None,
         "upload_requested": False,
         "check_requested": False,
@@ -396,29 +400,30 @@ def process_request(request: str) -> str:
         "message": None,
     }
 
+    # Execute the graph
     try:
         final_state = agent.invoke(init_state)
         
-        # Format a nice string response
+        # Format response
         parts = []
+        
         if final_state.get("message"):
             parts.append(f"Status: {final_state['message']}")
-            
-        if final_state.get("exists_result"):
-            parts.append(f"Existence Check: {json.dumps(final_state['exists_result'])}")
-            
-        if final_state.get("upload_result"):
-            parts.append(f"Upload Result: {json.dumps(final_state['upload_result'])}")
-            
+        
+        if final_state.get("file_path"):
+            parts.append(f"File: {final_state['file_path']}")
+        
+        if final_state.get("exists_result") is not None:
+            parts.append(f"Exists check: {json.dumps(final_state['exists_result'], indent=2, default=str)}")
+        
+        if final_state.get("upload_result") is not None:
+            parts.append(f"Upload result: {json.dumps(final_state['upload_result'], indent=2, default=str)}")
+        
         return "\n".join(parts) if parts else "Processed request (no details returned)."
         
     except Exception as e:
         return f"Agent execution error: {traceback.format_exc()}"
-    finally:
-        try:
-            loop.close()
-        except:
-            pass
+
 
 
 def main():

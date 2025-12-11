@@ -53,8 +53,7 @@ def main():
     main_server.mount(trade_capture_server)
     main_server.mount(trade_simulate_server, as_proxy=True, prefix="trade simulation")
 
-    # Order Details Agent MCP Server - Port 8002
-    main_server.run(transport="streamable-http", host="0.0.0.0", port=8002)
+    main_server.run(transport="streamable-http", host="0.0.0.0", port=8000)
 
 
 def setup_fastmcp_server_from_openapi_spec(

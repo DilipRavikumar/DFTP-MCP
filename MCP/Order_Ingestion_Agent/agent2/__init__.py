@@ -1,44 +1,25 @@
-"""Top-level package for agent2.
-
-A package for trading simulation and MCP server functionality.
-"""
+"""Order Ingestion Agent - Agent2 Package with MCP and LangGraph Integration."""
 
 __version__ = "0.1.0"
-__author__ = "Agent2 Team"
+__description__ = "Order Ingestion Agent with File Check and Upload Capability"
 
-# Import from mcpserver
-from .mcpserver import (
-    main as run_mcp_server,
-    ResponseCleaningAsyncClient,
-    setup_fastmcp_server_from_openapi_spec,
-    remove_none_values,
-)
-
-# Import from TradeSimulateSpecific
+# Import key functions from TradeSimulateSpecific
 from .TradeSimulateSpecific import (
-    main as run_trade_simulate,
-    build_check_and_upload_graph,
     build_mcp_client,
-    call_mcp_tool_sync,
     llm_invoke_sync,
+    call_mcp_tool_sync,
+    build_check_and_upload_graph,
     CheckUploadState,
+    process_request,
+    main,
 )
 
-# Define public API
 __all__ = [
-    # mcpserver exports
-    "run_mcp_server",
-    "ResponseCleaningAsyncClient",
-    "setup_fastmcp_server_from_openapi_spec",
-    "remove_none_values",
-    # TradeSimulateSpecific exports
-    "run_trade_simulate",
-    "build_check_and_upload_graph",
     "build_mcp_client",
-    "call_mcp_tool_sync",
     "llm_invoke_sync",
+    "call_mcp_tool_sync",
+    "build_check_and_upload_graph",
     "CheckUploadState",
-    # Package metadata
-    "__version__",
-    "__author__",
+    "process_request",
+    "main",
 ]

@@ -19,6 +19,7 @@ from .TradeGeneralAgent import (
     build_langgraph_router_graph,
     RouterState,
     main as run_trade_agent,
+    process_request,  # Now imports the wrapper function added to TradeGeneralAgent
 )
 
 __all__ = [
@@ -34,4 +35,5 @@ __all__ = [
     "build_langgraph_router_graph",
     "RouterState",
     "run_trade_agent",
+    "process_request",
 ]
