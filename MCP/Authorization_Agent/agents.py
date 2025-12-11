@@ -27,18 +27,14 @@ def call_nova_llm(prompt):
 
 def extract_token_and_scope(user_prompt: str):
     try:
-        # Try multiple locations for session.json
         import os
         current_dir = os.path.dirname(os.path.abspath(__file__))
-        # Try current directory (Authorization_Agent)
         session_path = os.path.join(current_dir, "session.json")
         if not os.path.exists(session_path):
-            # Try parent directory (MCP root)
             parent_dir = os.path.dirname(current_dir)
             session_path = os.path.join(parent_dir, "session.json")
         if not os.path.exists(session_path):
-            # Try supervisor_agent directory
-            supervisor_dir = os.path.join(parent_dir, "supervisor_agent")
+            supervisor_dir = os.path.join(parent_dir, "orchestrator")
             session_path = os.path.join(supervisor_dir, "session.json")
         
         if os.path.exists(session_path):

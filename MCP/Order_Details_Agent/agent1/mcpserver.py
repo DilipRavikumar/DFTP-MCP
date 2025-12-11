@@ -5,7 +5,6 @@ import json
 
 
 def remove_none_values(data: Any) -> Any:
-    """Recursively remove None values from dicts and lists."""
     if isinstance(data, dict):
         return {k: remove_none_values(v) for k, v in data.items() if v is not None}
     elif isinstance(data, list):
@@ -15,22 +14,17 @@ def remove_none_values(data: Any) -> Any:
 
 
 class ResponseCleaningAsyncClient(httpx.AsyncClient):
-    """AsyncClient wrapper that removes None values from JSON responses."""
-    
     async def request(self, *args, **kwargs):
         response = await super().request(*args, **kwargs)
         
-        # Try to clean the response JSON if it exists
         if response.status_code == 200 and "application/json" in response.headers.get("content-type", ""):
             try:
                 data = response.json()
                 cleaned = remove_none_values(data)
-                # Create a new response with cleaned data
                 cleaned_json = json.dumps(cleaned)
                 response._content = cleaned_json.encode('utf-8')
                 response.headers['content-length'] = str(len(response._content))
             except Exception:
-                # If cleaning fails, return original response
                 pass
         
         return response
@@ -65,7 +59,6 @@ def setup_fastmcp_server_from_openapi_spec(
         spec_link,
     ).json()
 
-    # Use the custom client that cleans responses
     client = ResponseCleaningAsyncClient(base_url=base_url)
 
     return FastMCP.from_openapi(

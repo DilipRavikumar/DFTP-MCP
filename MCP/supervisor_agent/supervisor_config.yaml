@@ -1,5 +1,5 @@
-supervisor:
-  name: "System Supervisor"
+orchestrator:
+  name: "System Orchestrator"
   description: "Coordinates specialized agents to handle different domains"
   llm:
     provider: "bedrock"
@@ -8,7 +8,7 @@ supervisor:
     temperature: 0.2
     max_tokens: 1024
   system_prompt: |
-    You are a helpful system supervisor that coordinates specialized agents.
+    You are a helpful system orchestrator that coordinates specialized agents.
     You can delegate tasks to:
     - position_agent: For calculating positions, submitting orders, fetching NAV data (requires MutualFunds, Assets, or Wealth scope)
     - order_details_agent: For general trade order details and routing (requires MutualFunds, Assets, or General scope)

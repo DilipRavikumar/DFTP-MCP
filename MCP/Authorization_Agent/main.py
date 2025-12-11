@@ -3,7 +3,6 @@ from build import build_graph
 from schema import State
 
 def run():
-    """Run the authorization agent with a prompt from command line."""
     if len(sys.argv) < 2:
         print("Error: Provide a prompt")
         sys.exit(1)
@@ -20,6 +19,5 @@ def run():
     except Exception as e:
         print("Error:", e)
 
-# Only execute when run as script, not when imported
 if __name__ == "__main__":
     run()

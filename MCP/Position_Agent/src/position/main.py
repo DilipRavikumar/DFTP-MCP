@@ -1,12 +1,4 @@
 #!/usr/bin/env python3
-"""
-langgraph_order_agent_fixed.py
-
-Positions orchestration agent (full file) with fixes:
- - JSON-decode MCP tool responses when they're JSON strings
- - Defensive logging of payloads sent to calculate
- - Slightly more defensive amount parsing (reuse previous improved parser)
-"""
 
 from typing import Any, Dict, Optional, List
 import re
@@ -17,11 +9,9 @@ import traceback
 import ast
 import sys
 
-# Dynamic import helper for auth service (assuming Authorization_Agent is sibling)
 def get_auth_service():
     try:
         current_dir = os.path.dirname(os.path.abspath(__file__))
-        # Go up 3 levels to reach 'MCP' root (src/position -> src -> Position_Agent -> MCP)
         mcp_root = os.path.abspath(os.path.join(current_dir, "..", "..", ".."))
         if mcp_root not in sys.path:
             sys.path.append(mcp_root)
@@ -33,17 +23,13 @@ def get_auth_service():
 
 def check_distributor_role() -> bool:
     try:
-        # Enforce looking for session.json in the project root first
-        # Locate root by finding where 'main.py' is relative to src/position
         current_file = os.path.abspath(__file__)
         src_dir = os.path.dirname(current_file)
-        # Go up: src/position -> src -> Position_Agent -> MCP
         mcp_root = os.path.abspath(os.path.join(src_dir, "..", "..", ".."))
         
         session_path = os.path.join(mcp_root, "session.json")
         
         if not os.path.exists(session_path):
-             # Fallback to current working directory
              session_path = os.path.join(os.getcwd(), "session.json")
         
         if not os.path.exists(session_path):
@@ -59,10 +45,9 @@ def check_distributor_role() -> bool:
 
         get_roles = get_auth_service()
         if not get_roles:
-            return False # Fail safe
+            return False
             
         roles = get_roles(token)
-        # Check for 'distributor' (case-insensitive)
         return any(str(r).lower() == "distributor" for r in roles)
             
     except Exception as e:
@@ -85,7 +70,6 @@ from langchain_aws import ChatBedrock
 from langchain_mcp_adapters.client import MultiServerMCPClient
 
 
-# MCP client
 def build_mcp_client() -> MultiServerMCPClient:
     mcp_url = os.getenv("MCP_URL", "http://127.0.0.1:8001/mcp")
     return MultiServerMCPClient(
@@ -98,7 +82,6 @@ def build_mcp_client() -> MultiServerMCPClient:
     )
 
 
-# LLM invocation
 def llm_invoke_sync(model, prompt_text: str) -> str:
     if model is None:
         raise RuntimeError("No router model provided for LLM-assisted parse.")
@@ -120,7 +103,6 @@ def llm_invoke_sync(model, prompt_text: str) -> str:
 
     raise RuntimeError("Router model has neither invoke nor ainvoke.")
 
-#tool_calling
 def call_mcp_tool_sync(tools: list, tool_name: str, tool_args: Dict[str, Any]) -> Any:
     lookup = {}
     for t in tools:
@@ -136,7 +118,6 @@ def call_mcp_tool_sync(tools: list, tool_name: str, tool_args: Dict[str, Any]) -
     if t is None:
         raise ValueError(f"Tool '{tool_name}' not found. Available: {list(lookup.keys())}")
 
-    # try async first
     if hasattr(t, "ainvoke"):
         try:
             return asyncio.run(t.ainvoke(tool_args))
@@ -165,9 +146,7 @@ def call_mcp_tool_sync(tools: list, tool_name: str, tool_args: Dict[str, Any]) -
 
 
 def extract_text_from_result(result: Any) -> str:
-    """Extract text content from LangChain message objects or return string representation."""
     if isinstance(result, list):
-        # Handle list of message objects (e.g., [{"type": "text", "text": "...", "id": "..."}])
         texts = []
         for item in result:
             if isinstance(item, dict):
@@ -195,11 +174,7 @@ def extract_text_from_result(result: Any) -> str:
         return str(result)
 
 def parse_json(obj: Any) -> Any:
-    """If obj is a string that looks like JSON, parse and return the object. 
-    Also handles LangChain message objects by extracting text first."""
-    # First, extract text if it's a LangChain message object
     if isinstance(obj, (list, dict)) and not isinstance(obj, str):
-        # Check if it looks like a LangChain message object
         if isinstance(obj, list) and len(obj) > 0 and isinstance(obj[0], dict) and "type" in obj[0]:
             obj = extract_text_from_result(obj)
         elif isinstance(obj, dict) and ("type" in obj or "text" in obj or "content" in obj):
@@ -211,7 +186,6 @@ def parse_json(obj: Any) -> Any:
             try:
                 return json.loads(s)
             except Exception:
-                # may be double-encoded or escaped; try un-escaping common patterns
                 try:
                     un = s.encode('utf-8').decode('unicode_escape')
                     return json.loads(un)
@@ -219,7 +193,6 @@ def parse_json(obj: Any) -> Any:
                     return obj
     return obj
 
-# LangGraph state
 class OrderAgentState(TypedDict):
     user_input: str
     clientName: Optional[str]
@@ -232,16 +205,13 @@ class OrderAgentState(TypedDict):
     position_result: Optional[Any]
     message: Optional[str]
 
-# Build graph for orders
 def build_order_graph(router_model, mcp_tools):
-    # Improved parser (same as before)
     def parse_user_input(user_text: str) -> Dict[str, Any]:
         client = None
         fund = None
         amount = None
         date = None
 
-        # fund detection
         m = re.search(r"\bfund(?:\s*number|\s*no|)\s*[:#]?\s*(\d{1,6})\b", user_text, flags=re.I)
         if not m:
             m = re.search(r"\bfund\s+(\d{1,6})\b", user_text, flags=re.I)
@@ -288,7 +258,6 @@ def build_order_graph(router_model, mcp_tools):
                 else:
                     amount = None
 
-        # date
         m3 = re.search(r"(\d{4}-\d{2}-\d{2})", user_text)
         if m3:
             date = m3.group(1)
@@ -297,7 +266,6 @@ def build_order_graph(router_model, mcp_tools):
             if m4:
                 date = m4.group(1)
 
-        # client
         m_client = re.search(r"(?:client|for)\s+([A-Z][a-zA-Z]{1,30})", user_text)
         if m_client:
             client = m_client.group(1)
@@ -308,12 +276,10 @@ def build_order_graph(router_model, mcp_tools):
 
         return {"clientName": client, "fundNumber": fund, "dollarAmount": amount, "asOfDate": date}
 
-    # parse node
     def parse_node(state: OrderAgentState) -> Dict[str, Any]:
         user_input = state["user_input"]
         parsed = parse_user_input(user_input)
 
-        # LLM fallback if fields missing
         if (parsed["fundNumber"] is None or parsed["dollarAmount"] is None or parsed["clientName"] is None) and router_model:
             system_prompt = (
                 "Extract from the user's message exactly JSON with these keys (use null for missing):\n"
@@ -363,7 +329,6 @@ def build_order_graph(router_model, mcp_tools):
         if not ok:
             message = "Parsing incomplete — some fields missing. Provide JSON like {\"clientName\":\"Alice\",\"fundNumber\":101,\"dollarAmount\":15000.5,\"asOfDate\":\"2025-12-08\"}"
 
-        # return state slice
         return {
             "clientName": parsed["clientName"],
             "fundNumber": parsed["fundNumber"],
@@ -376,7 +341,6 @@ def build_order_graph(router_model, mcp_tools):
             "message": message
         }
 
-    # submit node
     def submit_node(state: OrderAgentState) -> Dict[str, Any]:
         clientName = state.get("clientName")
         fundNumber = state.get("fundNumber")
@@ -385,7 +349,6 @@ def build_order_graph(router_model, mcp_tools):
         if not (clientName and fundNumber is not None and dollarAmount is not None):
             return {"submit_result": None, "message": "Missing order fields; skipping submit."}
 
-        # find a submit-like tool
         tool_obj = None
         for t in mcp_tools:
             n = getattr(t, "name", None) or getattr(t, "tool_name", None) or t.__class__.__name__
@@ -406,7 +369,6 @@ def build_order_graph(router_model, mcp_tools):
         try:
             tool_name = getattr(tool_obj, "name", None) or getattr(tool_obj, "tool_name", None) or tool_obj.__class__.__name__
             result = call_mcp_tool_sync(mcp_tools, tool_name, payload)
-            # Extract text from LangChain message objects if needed
             text_result = extract_text_from_result(result)
             parsed_result = parse_json(text_result)
             return {"submit_result": parsed_result, "message": "Order submitted (mock)."}
@@ -414,7 +376,6 @@ def build_order_graph(router_model, mcp_tools):
             tb = traceback.format_exc()
             return {"submit_result": None, "message": f"Submit failed: {e}\n{tb}"}
 
-    # get_nav node
     def get_nav_node(state: OrderAgentState) -> Dict[str, Any]:
         src = state.get("submit_result") or {}
         fund = None
@@ -439,7 +400,6 @@ def build_order_graph(router_model, mcp_tools):
         try:
             tool_name = getattr(tool_obj, "name", None) or getattr(tool_obj, "tool_name", None) or tool_obj.__class__.__name__
             result = call_mcp_tool_sync(mcp_tools, tool_name, payload)
-            # Extract text from LangChain message objects if needed
             text_result = extract_text_from_result(result)
             parsed = parse_json(text_result)
             return {"nav_result": parsed, "message": "Nav fetched."}
@@ -447,7 +407,6 @@ def build_order_graph(router_model, mcp_tools):
             tb = traceback.format_exc()
             return {"nav_result": None, "message": f"getNav failed: {e}\n{tb}"}
 
-    # calculate node
     def calculate_node(state: OrderAgentState) -> Dict[str, Any]:
         submitted = state.get("submit_result")
         nav = state.get("nav_result")
@@ -457,45 +416,36 @@ def build_order_graph(router_model, mcp_tools):
             nav_res = get_nav_node(state)
             nav = nav_res.get("nav_result")
 
-        # Helper to normalize to dict
         def normalize_to_dict(obj: Any) -> dict:
-            """Convert various formats to a dict."""
             if obj is None:
                 return {}
             if isinstance(obj, dict):
-                # Check if it's a LangChain message object
                 if "type" in obj or ("text" in obj and "content" not in obj):
                     obj = extract_text_from_result(obj)
                     if isinstance(obj, str):
                         obj = parse_json(obj)
                 return obj if isinstance(obj, dict) else {}
             if isinstance(obj, list):
-                # Check if it's a LangChain message object list
                 if len(obj) > 0 and isinstance(obj[0], dict) and "type" in obj[0]:
                     obj = extract_text_from_result(obj)
                     if isinstance(obj, str):
                         obj = parse_json(obj)
                 return obj if isinstance(obj, dict) else {}
             if isinstance(obj, str):
-                # Try JSON first
                 parsed = parse_json(obj)
                 if isinstance(parsed, dict):
                     return parsed
-                # If JSON parsing failed, try Python literal eval (for single-quote dict strings)
                 try:
                     parsed = ast.literal_eval(obj)
                     if isinstance(parsed, dict):
                         return parsed
                 except:
                     pass
-                # Last resort: try to extract and convert Python dict string to JSON
                 try:
-                    # Find dict-like content
                     start = obj.find("{")
                     end = obj.rfind("}") + 1
                     if start != -1 and end > start:
                         dict_str = obj[start:end]
-                        # Use ast.literal_eval which safely evaluates Python literals
                         parsed = ast.literal_eval(dict_str)
                         if isinstance(parsed, dict):
                             return parsed
@@ -532,7 +482,6 @@ def build_order_graph(router_model, mcp_tools):
             tb = traceback.format_exc()
             return {"position_result": None, "message": f"calculate failed: {e}\n{tb}"}
 
-    # Build graph
     graph = StateGraph(OrderAgentState)
     graph.add_node("parse_node", parse_node)
     graph.add_node("submit_node", submit_node)
@@ -549,20 +498,14 @@ def build_order_graph(router_model, mcp_tools):
     agent = graph.compile()
     return agent
 
-# Scope validation for Position Agent
 ALLOWED_SCOPES = ["MutualFunds", "Assets", "Wealth"]
 
 def extract_scope_from_request(request: str) -> tuple:
-    """Extract scope and actual request from formatted payload.
-    Format: "SCOPE:{scope}|ROLES:{roles}|REQUEST:{actual_request}"
-    Returns: (scope, actual_request)
-    """
     if request.startswith("SCOPE:"):
         try:
             parts = request.split("|REQUEST:", 1)
             if len(parts) == 2:
                 scope_part = parts[0].replace("SCOPE:", "")
-                # Extract just the scope (before |ROLES: if present)
                 if "|ROLES:" in scope_part:
                     scope = scope_part.split("|ROLES:")[0]
                 else:
@@ -571,33 +514,25 @@ def extract_scope_from_request(request: str) -> tuple:
                 return scope, actual_request
         except:
             pass
-    # If not formatted, return unauthorized and original request
     return "unauthorized", request
 
 def validate_scope(scope: str) -> bool:
-    """Check if scope is allowed for Position Agent."""
     return scope in ALLOWED_SCOPES
 
-# Supervisor entry point
 def process_request(request: str) -> str:
-    """Entry point for Supervisor Agent."""
     print(f"[POSITION_AGENT] process_request called from {__file__}")
     
-    # Extract scope from request
     scope, actual_request = extract_scope_from_request(request)
     
-    # Validate scope
     if not validate_scope(scope):
         return f"Unauthorized: Scope '{scope}' is not allowed for Position Agent. Required scopes: {', '.join(ALLOWED_SCOPES)}"
 
     mcp_tools = []
     try:
-        # Wrap MCP client creation with a timeout to prevent hang if backend is offline
         client = build_mcp_client()
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         
-        # Use wait_for to implement timeout
         async def get_tools_safe():
             return await client.get_tools()
             
@@ -609,7 +544,6 @@ def process_request(request: str) -> str:
             loop.close()
     except Exception as e:
         print(f"Warning initializing MCP tools: {e}")
-        # Proceed with empty toolkit rather than crashing/hanging
 
 
     bedrock_model_id = os.getenv("BEDROCK_MODEL_ID", "us.amazon.nova-pro-v1:0")
@@ -624,7 +558,7 @@ def process_request(request: str) -> str:
     agent = build_order_graph(router_model, mcp_tools)
     
     init_state: OrderAgentState = {
-        "user_input": actual_request,  # Use the actual request without scope prefix
+        "user_input": actual_request,
         "clientName": None,
         "fundNumber": None,
         "dollarAmount": None,
@@ -636,7 +570,6 @@ def process_request(request: str) -> str:
         "message": None
     }
     
-    # If the request is JSON, try to parse it
     if request.strip().startswith("{"):
         try:
             j = json.loads(request)
@@ -667,10 +600,7 @@ def process_request(request: str) -> str:
             pass
 
 
-# Top-Level Tool Wrappers for specific capabilities
-
 def _get_mcp_tool_by_keyword(client, keywords):
-    """Helper to find a tool by keyword safely."""
     try:
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
@@ -682,7 +612,7 @@ def _get_mcp_tool_by_keyword(client, keywords):
         try:
             mcp_tools = loop.run_until_complete(asyncio.wait_for(get_tools_safe(), timeout=2.0))
         except asyncio.TimeoutError:
-            pass # Return empty list
+            pass
             
         loop.close()
         
@@ -695,7 +625,6 @@ def _get_mcp_tool_by_keyword(client, keywords):
         return None, []
 
 def submit_order(clientName: str, fundNumber: int, dollarAmount: float, asOfDate: str = None) -> str:
-    """Submits an order directly."""
     try:
         client = build_mcp_client()
         payload = {
@@ -717,7 +646,6 @@ def submit_order(clientName: str, fundNumber: int, dollarAmount: float, asOfDate
         return f"Error submitting order: {e}"
 
 def get_nav(fundNumber: int, asOfDate: str = None) -> str:
-    """Gets NAV directly."""
     try:
         client = build_mcp_client()
         payload = {"fundNumber": fundNumber}
@@ -735,7 +663,6 @@ def get_nav(fundNumber: int, asOfDate: str = None) -> str:
         return f"Error getting NAV: {e}"
 
 def calculate_position(order_json: str, nav_json: str) -> str:
-    """Calculates position directly."""
     try:
         client = build_mcp_client()
         try:
@@ -757,7 +684,6 @@ def calculate_position(order_json: str, nav_json: str) -> str:
         return f"Error calculating position: {e}"
 
 
-# CLI runner
 def main():
     client = build_mcp_client()
     try:

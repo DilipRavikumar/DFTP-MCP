@@ -20,8 +20,7 @@ from langchain.chat_models import init_chat_model
 from langchain_aws import ChatBedrock
 from langgraph.checkpoint.memory import InMemorySaver
 
-#Load and manage supervisor configuration from YAML.
-class SupervisorConfig:
+class OrchestratorConfig:
     def __init__(self, config_path: str = "supervisor_config.yaml"):
         self.config_path = config_path
         self.config = self.load_config()
@@ -33,8 +32,8 @@ class SupervisorConfig:
         with open(self.config_path, "r") as f:
             return yaml.safe_load(f)
 
-    def get_supervisor_config(self) -> dict:
-        return self.config.get("supervisor", {})
+    def get_orchestrator_config(self) -> dict:
+        return self.config.get("orchestrator", {})
 
     def get_agents_config(self) -> list:
         return self.config.get("agents", [])
@@ -86,13 +85,13 @@ class AgentToolFactory:
         return tool_wrapper
 
 
-class SupervisorAgentBuilder:
-    def __init__(self, config: SupervisorConfig):
+class OrchestratorAgentBuilder:
+    def __init__(self, config: OrchestratorConfig):
         self.config = config
-        self.supervisor_config = config.get_supervisor_config()
+        self.orchestrator_config = config.get_orchestrator_config()
         self.agents_config = config.get_agents_config()
         self.sub_agents = {}
-        self.supervisor_tools = []
+        self.orchestrator_tools = []
 
     def create_llm(self, llm_config: dict) -> Any:
         provider = llm_config.get("provider", "bedrock")
@@ -137,8 +136,7 @@ class SupervisorAgentBuilder:
 
         return agent
     
-    # Create a tool wrapper to invoke a sub-agent.
-    def create_supervisor_tool(self, agent_name: str, agent: Any) -> BaseTool:
+    def create_orchestrator_tool(self, agent_name: str, agent: Any) -> BaseTool:
         @tool
         def agent_tool(request: str) -> str:
             """Invoke specialized agent for domain-specific task."""
@@ -162,7 +160,6 @@ class SupervisorAgentBuilder:
         agent_tool.description = f"Delegates to {agent_name} for domain-specific tasks."
         return agent_tool
 
-    # Build the supervisor agent
     def build(self) -> Any:
         # Scope mappings for each agent
         scope_mappings = {
@@ -253,44 +250,41 @@ class SupervisorAgentBuilder:
                     
                     # Create the tool using the factory to ensure proper closure
                     tool_instance = create_tool_for_agent(func, agent_name, allowed_scopes)
-                    self.supervisor_tools.append(tool_instance)
-                    # Skip sub-agent creation when process_request is available
+                    self.orchestrator_tools.append(tool_instance)
                     continue
             
-            # For agents without process_request, use sub-agent approach
             agent = self.create_sub_agent(agent_config)
             self.sub_agents[agent_name] = agent
 
         for agent_name, agent in self.sub_agents.items():
-            supervisor_tool = self.create_supervisor_tool(agent_name, agent)
-            self.supervisor_tools.append(supervisor_tool)
+            orchestrator_tool = self.create_orchestrator_tool(agent_name, agent)
+            self.orchestrator_tools.append(orchestrator_tool)
 
-        supervisor_llm = self.create_llm(self.supervisor_config.get("llm", {}))
+        orchestrator_llm = self.create_llm(self.orchestrator_config.get("llm", {}))
 
-        supervisor = create_agent(
-            supervisor_llm,
-            tools=self.supervisor_tools,
-            system_prompt=self.supervisor_config.get("system_prompt", ""),
+        orchestrator = create_agent(
+            orchestrator_llm,
+            tools=self.orchestrator_tools,
+            system_prompt=self.orchestrator_config.get("system_prompt", ""),
             checkpointer=InMemorySaver(),
         )
 
-        return supervisor
+        return orchestrator
 
-# Load and build supervisor agent from configuration
-def load_supervisor_agent(config_path: str = "supervisor_config.yaml") -> Any:
-    config = SupervisorConfig(config_path)
-    builder = SupervisorAgentBuilder(config)
+def load_orchestrator_agent(config_path: str = "supervisor_config.yaml") -> Any:
+    config = OrchestratorConfig(config_path)
+    builder = OrchestratorAgentBuilder(config)
     return builder.build()
 
 
-def run_supervisor(supervisor: Any, query: str, config_id: str = "default") -> None:
+def run_orchestrator(orchestrator: Any, query: str, config_id: str = "default") -> None:
     config = {"configurable": {"thread_id": config_id}}
 
     print(f"\n{'='*80}")
     print(f"Query: {query}")
     print(f"{'='*80}\n")
 
-    for step in supervisor.stream(
+    for step in orchestrator.stream(
         {"messages": [{"role": "user", "content": query}]},
         config,
     ):
@@ -309,9 +303,9 @@ def run_supervisor(supervisor: Any, query: str, config_id: str = "default") -> N
 
 
 def main():
-    supervisor = load_supervisor_agent()
+    orchestrator = load_orchestrator_agent()
 
-    print("Supervisor Agent Ready. Type 'exit' or 'quit' to stop.")
+    print("Orchestrator Agent Ready. Type 'exit' or 'quit' to stop.")
     while True:
         try:
             query = input("You: ").strip()
@@ -319,7 +313,7 @@ def main():
                 continue
             if query.lower() in ("exit", "quit"):
                 break
-            run_supervisor(supervisor, query)
+            run_orchestrator(orchestrator, query)
         except (KeyboardInterrupt, EOFError):
             print("\nExiting...")
             break

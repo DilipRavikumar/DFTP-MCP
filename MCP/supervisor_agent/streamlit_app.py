@@ -7,19 +7,19 @@ import requests
 import json
 from dotenv import load_dotenv
 
-# Import from the current directory (supervisor_agent)
+# Import from the current directory (orchestrator)
 # Use absolute import to avoid conflicts with Authorization_Agent/main.py
 import importlib.util
 current_dir = os.path.dirname(os.path.abspath(__file__))
 main_path = os.path.join(current_dir, "main.py")
-spec = importlib.util.spec_from_file_location("supervisor_main", main_path)
-supervisor_main = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(supervisor_main)
-load_supervisor_agent = supervisor_main.load_supervisor_agent
+spec = importlib.util.spec_from_file_location("orchestrator_main", main_path)
+orchestrator_main = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(orchestrator_main)
+load_orchestrator_agent = orchestrator_main.load_orchestrator_agent
 
 load_dotenv()
 
-st.set_page_config(page_title="DTCC Multi-Agent Supervisor", page_icon="🤖", layout="wide")
+st.set_page_config(page_title="DTCC Multi-Agent Orchestrator", page_icon="🤖", layout="wide")
 
 # Load CSS
 if os.path.exists("style.css"):
@@ -91,22 +91,22 @@ def extract_scope_from_token():
         return "unauthorized"
 
 @st.cache_resource
-def get_supervisor(_config_hash=None):
-    """Load and cache the supervisor agent.
+def get_orchestrator(_config_hash=None):
+    """Load and cache the orchestrator agent.
     The _config_hash parameter ensures cache is invalidated when config changes.
     """
-    return load_supervisor_agent()
+    return load_orchestrator_agent()
 
-def get_supervisor_with_invalidation():
-    """Get supervisor agent, using config file hash to invalidate cache."""
+def get_orchestrator_with_invalidation():
+    """Get orchestrator agent, using config file hash to invalidate cache."""
     config_path = os.path.join(os.path.dirname(__file__), "supervisor_config.yaml")
     try:
         import hashlib
         with open(config_path, "rb") as f:
             config_hash = hashlib.md5(f.read()).hexdigest()
-        return get_supervisor(config_hash)
+        return get_orchestrator(config_hash)
     except:
-        return get_supervisor(0)
+        return get_orchestrator(0)
 
 # Initialize session state
 if "thread_id" not in st.session_state:
@@ -128,7 +128,7 @@ AVAILABLE_AGENTS = [
     "🔐 Authorization Agent - Handles authorization inquiries and token validation"
 ]
 
-st.title("🤖 DTCC Multi-Agent Supervisor")
+st.title("🤖 DTCC Multi-Agent Orchestrator")
 st.caption("Unified interface for all specialized agents")
 
 # Login Section (if not logged in)
@@ -171,7 +171,7 @@ if not st.session_state.logged_in:
                 else:
                     st.error(f"❌ Login failed: {error}")
     
-    st.info("👆 Please login or enter a token to continue")
+    st.info("👆 Please login to continue")
     st.stop()
 
 # Main Chat Interface
@@ -221,14 +221,13 @@ with st.sidebar:
     if st.button("🗑️ Clear History"):
         st.session_state.messages = []
         st.session_state.thread_id = str(uuid.uuid4())
-        # Clear supervisor cache
-        get_supervisor.clear()
+        get_orchestrator.clear()
         st.rerun()
     
-    if st.button("🔄 Reload Supervisor"):
-        """Reload supervisor agent (clears cache and reloads config)."""
-        get_supervisor.clear()
-        st.success("✅ Supervisor reloaded! Configuration refreshed.")
+    if st.button("🔄 Reload Orchestrator"):
+        """Reload orchestrator agent (clears cache and reloads config)."""
+        get_orchestrator.clear()
+        st.success("✅ Orchestrator reloaded! Configuration refreshed.")
         st.rerun()
 
 # Display chat history
@@ -272,13 +271,12 @@ with st.expander("📤 Upload File", expanded=False):
                         "content": f"📤 Uploading file: {uploaded_file.name}"
                     })
                     
-                    # Process through supervisor
                     with st.spinner("Processing file upload..."):
-                        supervisor = get_supervisor_with_invalidation()
+                        orchestrator = get_orchestrator_with_invalidation()
                         config = {"configurable": {"thread_id": st.session_state.thread_id}}
                         
                         response_text = ""
-                        for params in supervisor.stream(
+                        for params in orchestrator.stream(
                             {"messages": [{"role": "user", "content": upload_request}]},
                             config,
                         ):
@@ -301,29 +299,26 @@ with st.expander("📤 Upload File", expanded=False):
 st.divider()
 
 # Chat input
-if prompt := st.chat_input("Ask the supervisor agent... (connects to all specialized agents)"):
+if prompt := st.chat_input("Ask the orchestrator agent... (connects to all specialized agents)"):
     st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
         st.markdown(prompt)
 
     with st.chat_message("assistant"):
-        # Get supervisor with cache invalidation based on config file
-        supervisor = get_supervisor_with_invalidation()
+        orchestrator = get_orchestrator_with_invalidation()
         config = {"configurable": {"thread_id": st.session_state.thread_id}}
         
-        # Contextualize prompt with scope
         full_prompt = f"[Context: {st.session_state.scope}] {prompt}"
         
         response_placeholder = st.empty()
         status_placeholder = st.empty()
-        status_placeholder.info("🔄 Processing request through supervisor agent...")
+        status_placeholder.info("🔄 Processing request through orchestrator agent...")
         
         full_response = ""
         agent_used = None
         
-        # Stream response from Supervisor
         try:
-            for params in supervisor.stream(
+            for params in orchestrator.stream(
                 {"messages": [{"role": "user", "content": full_prompt}]},
                 config,
             ):
@@ -334,10 +329,8 @@ if prompt := st.chat_input("Ask the supervisor agent... (connects to all special
                         status_placeholder.info(f"🔄 Using: {node_name}")
                     
                     if "messages" in update:
-                        # Get the last message from the update
                         last_msg = update["messages"][-1]
                         
-                        # Display AI messages
                         if hasattr(last_msg, "content") and last_msg.type == "ai":
                             chunk = last_msg.content
                             # If content is a list (multimodal?), join it
@@ -347,16 +340,11 @@ if prompt := st.chat_input("Ask the supervisor agent... (connects to all special
                             full_response = chunk
                             response_placeholder.markdown(full_response)
                         
-                        # Display tool messages (show which agent was called and output)
                         elif hasattr(last_msg, "type") and last_msg.type == "tool":
                             tool_name = getattr(last_msg, "name", "Unknown tool")
                             if tool_name and "agent" in tool_name.lower():
                                 agent_used = tool_name
                                 status_placeholder.info(f"🔧 Calling: {tool_name}")
-                                
-                                # Show tool output for debugging
-                                with st.expander(f"Tool Output: {tool_name}", expanded=False):
-                                    st.code(last_msg.content, language="markdown")
         
         except Exception as e:
             full_response = f"❌ Error: {str(e)}"

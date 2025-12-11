@@ -1,5 +1,4 @@
 def get_service_result(scope, query):
-    # Add business scopes
     if scope in ["MutualFunds", "Assets", "Wealth", "General"]:
         return f"Business user allowed ({scope}): processed query '{query}'"
     if scope == "ACCOUNT_MANAGER":
