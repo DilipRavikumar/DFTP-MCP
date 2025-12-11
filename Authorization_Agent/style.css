@@ -1,0 +1,43 @@
+[data-testid="stSidebar"] {
+    background: linear-gradient(180deg, #001F1A, #003E32) !important;
+    color: #FFFFFF !important;
+}
+
+[data-testid="stSidebar"] h1,
+[data-testid="stSidebar"] h2,
+[data-testid="stSidebar"] h3 {
+    color: #4FFFE1 !important;
+    font-weight: 700 !important;
+}
+
+.stTextInput input {
+    background-color: #002A24 !important;
+    color: #FFFFFF !important;
+    border: 1px solid #00C6A2 !important;
+    border-radius: 6px !important;
+}
+
+.stTextInput input:focus {
+    border: 1px solid #4FFFE1 !important;
+    box-shadow: 0 0 8px #00C6A280 !important;
+}
+
+.stButton button {
+    background-color: #00C6A2 !important;
+    color: #001F1A !important;
+    font-weight: 600 !important;
+    border-radius: 8px !important;
+    border: none !important;
+    box-shadow: 0 0 8px #00C6A260 !important;
+    padding: 7px 14px !important;
+}
+
+.stButton button:hover {
+    background-color: #4FFFE1 !important;
+    box-shadow: 0 0 12px #4FFFE180 !important;
+    color: #001F1A !important;
+}
+
+hr {
+    border: 0.5px solid #004B43 !important;
+}
