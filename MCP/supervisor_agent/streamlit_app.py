@@ -91,9 +91,22 @@ def extract_scope_from_token():
         return "unauthorized"
 
 @st.cache_resource
-def get_supervisor():
-    """Load and cache the supervisor agent."""
+def get_supervisor(_config_hash=None):
+    """Load and cache the supervisor agent.
+    The _config_hash parameter ensures cache is invalidated when config changes.
+    """
     return load_supervisor_agent()
+
+def get_supervisor_with_invalidation():
+    """Get supervisor agent, using config file hash to invalidate cache."""
+    config_path = os.path.join(os.path.dirname(__file__), "supervisor_config.yaml")
+    try:
+        import hashlib
+        with open(config_path, "rb") as f:
+            config_hash = hashlib.md5(f.read()).hexdigest()
+        return get_supervisor(config_hash)
+    except:
+        return get_supervisor(0)
 
 # Initialize session state
 if "thread_id" not in st.session_state:
@@ -208,6 +221,14 @@ with st.sidebar:
     if st.button("🗑️ Clear History"):
         st.session_state.messages = []
         st.session_state.thread_id = str(uuid.uuid4())
+        # Clear supervisor cache
+        get_supervisor.clear()
+        st.rerun()
+    
+    if st.button("🔄 Reload Supervisor"):
+        """Reload supervisor agent (clears cache and reloads config)."""
+        get_supervisor.clear()
+        st.success("✅ Supervisor reloaded! Configuration refreshed.")
         st.rerun()
 
 # Display chat history
@@ -222,7 +243,8 @@ if prompt := st.chat_input("Ask the supervisor agent... (connects to all special
         st.markdown(prompt)
 
     with st.chat_message("assistant"):
-        supervisor = get_supervisor()
+        # Get supervisor with cache invalidation based on config file
+        supervisor = get_supervisor_with_invalidation()
         config = {"configurable": {"thread_id": st.session_state.thread_id}}
         
         # Contextualize prompt with scope

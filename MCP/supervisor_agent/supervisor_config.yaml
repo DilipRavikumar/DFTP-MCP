@@ -34,28 +34,28 @@ agents:
       Delegate requests related to file checking, uploading, or simulating trades to the process_request tool.
 
   - name: "order_details_agent"
-    description: "Handles general trade order details and routing. Use for general trade inquiries and order management."
+    description: "MANDATORY TOOL: Use for ALL order status queries AND order ID lookups (e.g. 'state of order', 'status for ID'). Returns real data. Use for: checking order status by ID, querying order details, getting orders by state. DO NOT use position_agent for this."
     module_path: "Order_Details_Agent.agent1.TradeGeneralAgent"
     tools_from_module: ["process_request"]
     llm:
       provider: "bedrock"
       model_id: "us.amazon.nova-pro-v1:0"
       region: "us-east-2"
-      temperature: 0.1
+      temperature: 0.0
       max_tokens: 512
     system_prompt: |
       You are an order details assistant.
       Delegate general trade inquiries to the process_request tool.
 
   - name: "position_agent"
-    description: "Calculates positions and deals with funds/NAVs. Use for calculating positions, submitting orders with fund numbers, etc."
+    description: "Calculates positions and deals with funds/NAVs. Use ONLY for 'calculate position', 'submit order', 'fund number', or 'NAV'. DO NOT use for general order status/state queries."
     module_path: "Position_Agent.src.position.main"
     tools_from_module: ["process_request", "submit_order", "get_nav", "calculate_position"]
     llm:
       provider: "bedrock"
       model_id: "us.amazon.nova-pro-v1:0"
       region: "us-east-2"
-      temperature: 0.1
+      temperature: 0.0
       max_tokens: 512
     system_prompt: |
       You are a position calculation assistant.

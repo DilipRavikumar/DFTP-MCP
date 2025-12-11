@@ -44,6 +44,13 @@ class AgentToolFactory:
     @staticmethod
     def load_module(module_path: str) -> Any:
         try:
+            if module_path in sys.modules:
+                try:
+                    return importlib.reload(sys.modules[module_path])
+                except ImportError:
+                    # If reload fails (e.g. parent not in sys.modules), 
+                    # remove from sys.modules and re-import fresh
+                    del sys.modules[module_path]
             return importlib.import_module(module_path)
         except ImportError as e:
             raise ImportError(f"Failed to import {module_path}: {e}")

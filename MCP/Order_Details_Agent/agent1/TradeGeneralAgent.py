@@ -44,7 +44,8 @@ except Exception:
 
 
 # Read configuration from environment with sensible defaults
-MCP_GATEWAY_URL = os.environ.get("MCP_GATEWAY_URL", "http://127.0.0.1:8002/mcp")
+# WE FORCE PORT 8002 HERE to avoid cross-talk with Position Agent (8001)
+MCP_GATEWAY_URL = "http://127.0.0.1:8002/mcp"
 MCP_GATEWAY_TRANSPORT = os.environ.get("MCP_GATEWAY_TRANSPORT", "streamable_http")
 ROUTER_MODEL_ID = os.environ.get("ROUTER_MODEL_ID", "us.amazon.nova-pro-v1:0")
 AWS_REGION = os.environ.get("AWS_REGION", "us-east-2")
@@ -252,6 +253,8 @@ def build_langgraph_router_graph(router_model, mcp_tools):
       - tool_node: executes the MCP tool and stores the result
     """
 
+    agent_builder = StateGraph(RouterState)
+
     # Node: llm_node(state) -> returns partial state update
     def llm_node(state: RouterState) -> Dict[str, Any]:
         user_input = state["user_input"]
@@ -272,115 +275,224 @@ def build_langgraph_router_graph(router_model, mcp_tools):
         prompt_text = system_prompt + "\n\nUser request: " + user_input
 
         # Call the router LLM (safe wrapper)
+        data = {"tool_name": None, "arguments": {}}
         try:
             text = llm_invoke_sync(router_model, prompt_text)
-        except Exception as e:
-            # If the router LLM fails, we return a "no tool" state with a message
-            return {
-                "tool_name": None,
-                "arguments": {},
-                "result": None,
-                "message": f"Router LLM error: {e}",
-            }
-
-        # Try to parse JSON strictly; if fails, attempt to salvage first {...}
-        try:
-            data = json.loads(text)
-        except json.JSONDecodeError:
-            start = text.find("{")
-            end = text.rfind("}") + 1
-            if start != -1 and end > start:
-                try:
-                    data = json.loads(text[start:end])
-                except Exception:
-                    data = {"tool_name": None, "arguments": {}}
-            else:
-                data = {"tool_name": None, "arguments": {}}
+            try:
+                data = json.loads(text)
+            except json.JSONDecodeError:
+                start = text.find("{")
+                end = text.rfind("}") + 1
+                if start != -1 and end > start:
+                    try:
+                        data = json.loads(text[start:end])
+                    except Exception:
+                         pass
+        except Exception:
+             pass
 
         tool_name = data.get("tool_name")
-    
- 
-    _mcp_client = build_mcp_client()
-    client = _mcp_client
-    try:
-       
-        mcp_tools = asyncio.run(client.get_tools())
-    except Exception as e:
-        print("Failed to get MCP tools:", e)
-        raise
+        arguments = data.get("arguments", {}) or {}
 
-    
-    print("=" * 70)
-    print("Loaded MCP tools:", [t.name for t in mcp_tools])
-    print("=" * 70)
-    for t in mcp_tools:
-        print("=== TOOL ===", t.name)
-        print("  description:", getattr(t, "description", None))
+        # ----------------------------------------------------------------------------------
+        # AUTO-RESCUE LOGIC for UUIDs
+        # ----------------------------------------------------------------------------------
+        if not tool_name:
+             # If LLM failed, check for UUID pattern in input
+             import re
+             uuid_pattern = r'[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'
+             match = re.search(uuid_pattern, user_input, re.IGNORECASE)
+             # If UUID found and user asked for "order" or "status"
+             if match and ("order" in user_input.lower() or "status" in user_input.lower()):
+                 order_id = match.group(0)
+                 # Find best tool (e.g. process_request or get_order)
+                 # In this case, we prefer 'process_request' if it exists, or anything with 'order'
+                 best_tool = next((t for t in mcp_tools if "status" in t.name.lower()), None)
+                 if not best_tool:
+                     best_tool = next((t for t in mcp_tools if "get" in t.name.lower()), None)
+                 if not best_tool:
+                     # Fallback to process_request if available
+                     best_tool = next((t for t in mcp_tools if "process_request" in t.name.lower()), None)
+                 
+                 if best_tool:
+                     tool_name = best_tool.name
+                     arguments = {"orderId": order_id}
+
+        # Return partial state updates
+        return {
+            "tool_name": tool_name,
+            "arguments": arguments,
+            "result": None,
+            "message": None,
+        }
+
+    agent_builder.add_node("llm_node", llm_node)
+
+    # Node: tool_node(state) -> executes tool, returns result
+    def tool_node(state: RouterState) -> Dict[str, Any]:
+        tool_name = state.get("tool_name")
+        arguments = state.get("arguments", {})
         
-        try:
-            print("  input_schema:", getattr(t, "input_schema", None))
-            print("  output_schema:", getattr(t, "output_schema", None))
-        except Exception:
-            pass
-        print()
+        if not tool_name:
+            return {"result": None, "message": "No tool selected."}
+        
+        # Find the tool object
+        tool = next((t for t in mcp_tools if t.name == tool_name), None)
+        if not tool:
+            return {"result": None, "message": f"Tool '{tool_name}' not found."}
 
-    # 2) Build router model (ChatBedrock) using environment-configured model id and region
+        try:
+            # Execute the tool
+            observation = asyncio.run(tool.ainvoke(arguments))
+            
+            # Check for HTTP errors or empty observations
+            if observation is None:
+                 return {"result": None, "message": f"Tool '{tool_name}' returned no data."}
+
+            return {"result": observation, "message": f"Tool '{tool_name}' executed successfully."}
+        except Exception as e:
+            tb = traceback.format_exc()
+            return {"result": None, "message": f"Tool execution error: {e}"}
+
+    # Conditional edge function: if LLM chose a tool -> tool_node; else END
+    def router_edge(state: RouterState) -> str:
+        if state.get("tool_name"):
+            return "tool_node"
+        return END
+
+    agent_builder.add_conditional_edges("llm_node", router_edge)
+    agent_builder.add_edge("tool_node", END)
+    
+    # Set the entry point
+    agent_builder.set_entry_point("llm_node")
+
+    return agent_builder.compile()
+
+
+ALLOWED_SCOPES = ["MutualFunds", "Assets", "Wealth", "General", "ACCOUNT_MANAGER"]
+
+def extract_scope_from_request(request: str) -> tuple[str, str]:
+    """Helper to extract scope from request string if present."""
+    scope = "unknown"
+    actual_request = request
+    
+    if "SCOPE:" in request and "|REQUEST:" in request:
+        try:
+            parts = request.split("|")
+            for part in parts:
+                if part.startswith("SCOPE:"):
+                    scope = part.replace("SCOPE:", "").strip()
+                elif part.startswith("REQUEST:"):
+                    actual_request = part.replace("REQUEST:", "").strip()
+        except:
+            pass
+            
+    return scope, actual_request
+
+def validate_scope(scope: str) -> bool:
+    """Check if scope is allowed for Order Details Agent."""
+    return scope in ALLOWED_SCOPES
+
+def process_request(request: str) -> str:
+    """Entry point for Supervisor Agent."""
+    # Extract scope from request
+    scope, actual_request = extract_scope_from_request(request)
+    
+    # Validate scope
+    if not validate_scope(scope):
+        return f"Unauthorized: Scope '{scope}' is not allowed for Order Details Agent. Required scopes: {', '.join(ALLOWED_SCOPES)}"
+    
+    global _mcp_client
+    
+    mcp_tools = []
+    try:
+        # Create FRESH client per request to avoid loops issues
+        client = build_mcp_client()
+        
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        
+        async def get_tools_safe():
+            try:
+                return await client.get_tools()
+            except Exception as e:
+                print(f"Error getting tools: {e}")
+                return []
+
+        try:
+            mcp_tools = loop.run_until_complete(asyncio.wait_for(get_tools_safe(), timeout=2.0))
+        except asyncio.TimeoutError:
+            print("Warning: MCP tool retrieval timed out in Order Details Agent. Proceeding with no tools.")
+        finally:
+            loop.close()
+            # We do NOT close the client here because LangChain tools might need it? 
+            # Actually LangChain tools hold a reference.
+            pass
+    except Exception as e:
+        print(f"Warning initializing MCP tools in Order Details Agent: {e}")
+
     router_model = ChatBedrock(
         model_id=ROUTER_MODEL_ID,
         region_name=AWS_REGION,
     )
 
-    # 3) Build and compile LangGraph graph
     agent = build_langgraph_router_graph(router_model, mcp_tools)
+    
+    init_state: RouterState = {
+        "user_input": actual_request,  # Use the actual request without scope prefix
+        "tool_name": None,
+        "arguments": {},
+        "result": None,
+        "message": None,
+    }
 
-    print("=" * 70)
-    print("LangGraph router compiled. Type 'exit' to quit.")
-    print("=" * 70)
-    print()
+    try:
+        final_state = agent.invoke(init_state)
+        
+        # Format a nice string response
+        parts = []
+        
+        # We ignore the generic "message" like "Tool executed successfully"
+        # We focus on the "result"
+        if final_state.get("result"):
+            result = final_state.get("result")
+            # Handle error results
+            if isinstance(result, dict) and "error" in result:
+                parts.append(f"Error: {result['error']}")
+                if "details" in result:
+                     parts.append(f"Details: {result['details']}")
+            else:
+                # Pretty print success
+                parts.append(f"Result: {json.dumps(result, indent=2)}")
+        elif final_state.get("message"):
+             parts.append(f"Status: {final_state['message']}")
+            
+        return "\n".join(parts) if parts else "Processed request (no details returned)."
+        
+    except Exception as e:
+        return f"Agent execution error: {traceback.format_exc()}"
 
-    # CLI loop (synchronous)
+
+
+def main():
+    print("Agent CLI (Port 8002 Forced). Type 'exit' to quit.")
     while True:
         try:
             user_input = input("You: ").strip()
-        except (EOFError, KeyboardInterrupt):
+            if not user_input:
+                continue
+            if user_input.lower() in ("exit", "quit"):
+                break
+            
+            # Simulate scope for CLI
+            # We assume a general scope for testing
+            mock_payload = f"SCOPE:General|ROLES:admin|REQUEST:{user_input}"
+            response = process_request(mock_payload)
+            print(f"Agent: {response}")
+            
+        except (KeyboardInterrupt, EOFError):
             print("\nBye!")
             break
-
-        if not user_input:
-            continue
-        if user_input.lower() in ("exit", "quit"):
-            print("Bye!")
-            break
-
-        # Initialize state
-        init_state: RouterState = {
-            "user_input": user_input,
-            "tool_name": None,
-            "arguments": {},
-            "result": None,
-            "message": None,
-        }
-
-        # Execute the graph (agent.invoke runs synchronously and returns updated state)
-        try:
-            final_state = agent.invoke(init_state)
-        except Exception as e:
-            print("Agent execution error:", e)
-            print(traceback.format_exc())
-            continue
-
-        # Show result / message
-        msg = final_state.get("message")
-        res = final_state.get("result")
-
-        print(f"\nRouter message: {msg}")
-        print("Tool result:")
-        try:
-            print(json.dumps(res, indent=2, default=str))
-        except Exception:
-            print(res)
-        print("\n" + "=" * 70 + "\n")
-
 
 if __name__ == "__main__":
     main()
