@@ -37,25 +37,17 @@ class ResponseCleaningAsyncClient(httpx.AsyncClient):
 
 
 def main():
-    try:
-        trade_capture_server: FastMCP = setup_fastmcp_server_from_openapi_spec(
-            spec_link="http://localhost:8088/api-docs",
-            base_url="http://localhost:8088",
-            server_name="Trade Capture MCP Server",
-        )
-    except Exception as e:
-        print(f"Warning: Could not connect to Trade Capture API (8088): {e}")
-        trade_capture_server = FastMCP("Trade Capture MCP Server (Fallback)")
+    trade_capture_server: FastMCP = setup_fastmcp_server_from_openapi_spec(
+        spec_link="http://localhost:8088/api-docs",
+        base_url="http://localhost:8088",
+        server_name="Trade Capture MCP Server",
+    )
 
-    try:
-        trade_simulate_server: FastMCP = setup_fastmcp_server_from_openapi_spec(
-            spec_link="http://localhost:8081/v3/api-docs",
-            base_url="http://localhost:8081",
-            server_name="Trade Simulate MCP Server",
-        )
-    except Exception as e:
-        print(f"Warning: Could not connect to Trade Simulate API (8081): {e}")
-        trade_simulate_server = FastMCP("Trade Simulate MCP Server (Fallback)")
+    trade_simulate_server: FastMCP = setup_fastmcp_server_from_openapi_spec(
+        spec_link="http://localhost:8081/v3/api-docs",
+        base_url="http://localhost:8081",
+        server_name="Trade Simulate MCP Server",
+    )
 
     main_server: FastMCP = FastMCP(name="Gateway MCP Server")
     main_server.mount(trade_capture_server)

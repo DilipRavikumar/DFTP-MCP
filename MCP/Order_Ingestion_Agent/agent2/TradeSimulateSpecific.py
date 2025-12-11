@@ -361,26 +361,20 @@ def process_request(request: str) -> str:
         return f"Unauthorized: Scope '{scope}' is not allowed for Order Ingestion Agent. Required scopes: {', '.join(ALLOWED_SCOPES)}"
     
     mcp_tools = []
-    loop = None
     try:
         client = build_mcp_client()
-        
-        # Create or get event loop
-        try:
-            loop = asyncio.get_event_loop()
-        except RuntimeError:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
         
         async def get_tools_safe():
             return await client.get_tools()
 
         try:
-             mcp_tools = loop.run_until_complete(asyncio.wait_for(get_tools_safe(), timeout=5.0))
+             mcp_tools = loop.run_until_complete(asyncio.wait_for(get_tools_safe(), timeout=2.0))
         except asyncio.TimeoutError:
              print("Warning: MCP tool retrieval timed out in Order Ingestion Agent. Proceeding with no tools.")
-        except Exception as e:
-            print(f"Warning: Error getting MCP tools: {e}")
+        finally:
+            loop.close()
     except Exception as e:
         print(f"Warning initializing MCP tools in Order Ingestion Agent: {e}")
 
@@ -389,12 +383,6 @@ def process_request(request: str) -> str:
         model_id=ROUTER_MODEL_ID,
         region_name=AWS_REGION,
     )
-
-    # Log available tools for debugging
-    if mcp_tools:
-        print(f"Order Ingestion Agent: Loaded {len(mcp_tools)} MCP tools")
-    else:
-        print("Order Ingestion Agent: Warning - No MCP tools loaded. MCP server may not be running on port 8003.")
 
     agent = build_check_and_upload_graph(router_model, mcp_tools)
     
@@ -417,26 +405,20 @@ def process_request(request: str) -> str:
             parts.append(f"Status: {final_state['message']}")
             
         if final_state.get("exists_result"):
-            result = final_state.get("exists_result")
-            if isinstance(result, dict) and "error" in result:
-                parts.append(f"Existence Check Error: {result.get('error', 'Unknown error')}")
-            else:
-                parts.append(f"Existence Check: {json.dumps(result)}")
+            parts.append(f"Existence Check: {json.dumps(final_state['exists_result'])}")
             
         if final_state.get("upload_result"):
-            result = final_state.get("upload_result")
-            if isinstance(result, dict) and "error" in result:
-                parts.append(f"Upload Error: {result.get('error', 'Unknown error')}")
-            else:
-                parts.append(f"Upload Result: {json.dumps(result)}")
+            parts.append(f"Upload Result: {json.dumps(final_state['upload_result'])}")
             
         return "\n".join(parts) if parts else "Processed request (no details returned)."
         
     except Exception as e:
-        error_msg = f"Agent execution error: {str(e)}"
-        print(f"Order Ingestion Agent Error: {error_msg}")
-        print(traceback.format_exc())
-        return f"{error_msg}\n\nFull traceback:\n{traceback.format_exc()}"
+        return f"Agent execution error: {traceback.format_exc()}"
+    finally:
+        try:
+            loop.close()
+        except:
+            pass
 
 
 def main():

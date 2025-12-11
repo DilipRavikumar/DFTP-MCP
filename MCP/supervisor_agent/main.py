@@ -160,7 +160,6 @@ class SupervisorAgentBuilder:
             "position_agent": ["MutualFunds", "Assets", "Wealth"],
             "order_details_agent": ["MutualFunds", "Assets", "General"],
             "order_ingestion_agent": ["MutualFunds", "Assets", "ACCOUNT_MANAGER"],
-            "authorization_agent": ["MutualFunds", "Assets", "Wealth", "General", "ACCOUNT_MANAGER"],  # Authorization agent accepts all scopes
         }
         
         # Helper function to get user scope
@@ -179,7 +178,9 @@ class SupervisorAgentBuilder:
             module_path = agent_config.get("module_path")
             tool_names = agent_config.get("tools_from_module", [])
             
-            # authorization_agent is available as a tool for authorization queries only
+            # Skip authorization_agent in tool creation (it's used separately for scope extraction)
+            if agent_name == "authorization_agent":
+                continue
             
             # If process_request is in the tools, expose it directly as a tool
             # This avoids double-wrapping and works better with LangGraph agents
@@ -197,58 +198,36 @@ class SupervisorAgentBuilder:
                     def direct_agent_tool(request: str) -> str:
                         """Invoke specialized agent for domain-specific task."""
                         try:
-                            # For authorization_agent, pass request directly
-                            if agent_name == "authorization_agent":
-                                print(f"Supervisor - Calling {agent_name} with request: '{request[:100] if len(request) > 100 else request}'")
-                                result = func(request)
-                                print(f"Supervisor - {agent_name} returned result (first 200 chars): {str(result)[:200] if result else 'None'}")
-                                return str(result) if result is not None else "Operation completed"
-                            
-                            # For all other agents, first check authorization
                             # Get current scope
                             current_scope_info = get_user_scope()
                             current_scope = current_scope_info.get("scope", "unauthorized")
                             
-                            print(f"Supervisor - Checking authorization before calling {agent_name} with scope: '{current_scope}'")
-                            
-                            # First, verify authorization by calling authorization_agent
-                            try:
-                                auth_module = AgentToolFactory.load_module("Authorization_Agent.wrapper")
-                                if hasattr(auth_module, "process_request"):
-                                    # Check authorization first
-                                    auth_check = auth_module.process_request(f"Check if user with scope {current_scope} can access {agent_name}")
-                                    print(f"Supervisor - Authorization check result: {auth_check[:200] if auth_check else 'None'}")
-                                    
-                                    # If authorization check fails, return error
-                                    if "Unauthorized" in str(auth_check) or "Invalid or missing permissions" in str(auth_check):
-                                        return f"Authorization failed: {auth_check}. Please check your permissions."
-                            except Exception as e:
-                                print(f"Supervisor - Warning: Could not verify authorization: {e}")
-                                # Continue anyway - let the agent handle scope validation
-                            
-                            # Validate scope for this agent
+                            # Check if scope is allowed for this agent
                             if current_scope not in allowed_scopes and current_scope != "unauthorized":
-                                error_msg = f"Unauthorized: Scope '{current_scope}' is not allowed for {agent_name}. Required scopes: {', '.join(allowed_scopes)}"
-                                print(f"Supervisor - {error_msg}")
-                                return error_msg
-                            
-                            print(f"Supervisor - Authorization passed. Calling {agent_name} with scope: '{current_scope}', request: '{request[:100] if len(request) > 100 else request}'")
+                                return f"Unauthorized: Scope '{current_scope}' is not allowed for {agent_name}. Required scopes: {', '.join(allowed_scopes)}"
                             
                             # Pass scope info in request (agents can extract it)
                             # Format: "SCOPE:{scope}|ROLES:{roles}|REQUEST:{actual_request}"
                             scope_payload = f"SCOPE:{current_scope}|ROLES:{','.join(current_scope_info.get('roles', []))}|REQUEST:{request}"
-                            print(f"Supervisor - Sending to {agent_name}: '{scope_payload[:200] if len(scope_payload) > 200 else scope_payload}'")
-                            
                             result = func(scope_payload)
                             
-                            print(f"Supervisor - {agent_name} returned result (first 200 chars): {str(result)[:200] if result else 'None'}")
-                            
-                            return str(result) if result is not None else "Operation completed"
+                            # STRICT OUTPUT WRAPPER (Restored)
+                            result_str = str(result)
+                            if not result_str or result_str == "None":
+                                return "TOOL_ERROR: No data returned from tool."
+                                
+                            return (
+                                f"DATA_FROM_TOOL_START\n"
+                                f"{result_str}\n"
+                                f"DATA_FROM_TOOL_END\n\n"
+                                f"INSTRUCTION: The above data is the COMPLETE and ONLY truth. "
+                                f"Return it EXACTLY as is. "
+                                f"Do NOT add any fund names, investor names, dates, or details not present above. "
+                                f"If the data is sparse (e.g. only ID and status), return ONLY ID and status."
+                            )
                         except Exception as e:
                             import traceback
-                            error_msg = f"Error in {agent_name}: {str(e)}\n{traceback.format_exc()}"
-                            print(f"Supervisor - {error_msg}")
-                            return error_msg
+                            return f"Error in {agent_name}: {str(e)}\n{traceback.format_exc()}"
                     
                     direct_agent_tool.name = agent_name
                     direct_agent_tool.description = agent_config.get("description", f"Delegates to {agent_name} for domain-specific tasks.")
@@ -265,11 +244,6 @@ class SupervisorAgentBuilder:
             self.supervisor_tools.append(supervisor_tool)
 
         supervisor_llm = self.create_llm(self.supervisor_config.get("llm", {}))
-        
-        # Debug: Log available tools
-        tool_names = [tool.name for tool in self.supervisor_tools]
-        print(f"Supervisor - Available tools: {tool_names}")
-        print(f"Supervisor - Total tools: {len(self.supervisor_tools)}")
 
         supervisor = create_agent(
             supervisor_llm,
