@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Orders>
+    <Order>
+        <OriginatorType>1</OriginatorType>
+        <FirmNumber>1</FirmNumber>
+        <FundNumber>1</FundNumber>
+        <TransactionType>B</TransactionType>
+        <TransactionId>TXN0000000000001</TransactionId>
+        <TradeDateTime>01012025093000</TradeDateTime>
+        <DollarAmount>150.00</DollarAmount>
+        <ClientName>JOHN DOE</ClientName>
+        <SSN>123456789</SSN>
+        <DOB>01011990</DOB>
+        <ShareQuantity>250.00</ShareQuantity>
+    </Order>
+    <Order>
+        <OriginatorType>0</OriginatorType>
+        <FirmNumber>2</FirmNumber>
+        <FundNumber>2</FundNumber>
+        <TransactionType>S</TransactionType>
+        <TransactionId>TXN0000000000002</TransactionId>
+        <TradeDateTime>02012025101500</TradeDateTime>
+        <DollarAmount>0.00</DollarAmount>
+        <ClientName>JANE SMITH</ClientName>
+        <SSN>987654321</SSN>
+        <DOB>15071985</DOB>
+        <ShareQuantity>150.00</ShareQuantity>
+    </Order>
+    <Order>
+        <OriginatorType>1</OriginatorType>
+        <FirmNumber>3</FirmNumber>
+        <FundNumber>3</FundNumber>
+        <TransactionType>B</TransactionType>
+        <TransactionId>TXN0000000000003</TransactionId>
+        <TradeDateTime>03012025143000</TradeDateTime>
+        <DollarAmount>250.00</DollarAmount>
+        <ClientName>ROBERT WILSON</ClientName>
+        <SSN>456789123</SSN>
+        <DOB>02021992</DOB>
+        <ShareQuantity>500.00</ShareQuantity>
+    </Order>
+    <Order>
+        <OriginatorType>0</OriginatorType>
+        <FirmNumber>4</FirmNumber>
+        <FundNumber>4</FundNumber>
+        <TransactionType>S</TransactionType>
+        <TransactionId>TXN0000000000004</TransactionId>
+        <TradeDateTime>04012025092030</TradeDateTime>
+        <DollarAmount>0.00</DollarAmount>
+        <ClientName>MARIA GARCIA</ClientName>
+        <SSN>321456987</SSN>
+        <DOB>11111988</DOB>
+        <ShareQuantity>200.00</ShareQuantity>
+    </Order>
+    <Order>
+        <OriginatorType>1</OriginatorType>
+        <FirmNumber>5</FirmNumber>
+        <FundNumber>5</FundNumber>
+        <TransactionType>B</TransactionType>
+        <TransactionId>TXN0000000000005</TransactionId>
+        <TradeDateTime>05012025144520</TradeDateTime>
+        <DollarAmount>125.00</DollarAmount>
+        <ClientName>DAVID LEE</ClientName>
+        <SSN>654321789</SSN>
+        <DOB>09061993</DOB>
+        <ShareQuantity>300.00</ShareQuantity>
+    </Order>
+</Orders>

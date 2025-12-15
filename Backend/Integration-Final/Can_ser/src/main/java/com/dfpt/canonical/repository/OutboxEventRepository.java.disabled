@@ -1,0 +1,94 @@
+package com.dfpt.canonical.repository;
+
+import com.dfpt.canonical.model.OutboxEvent;
+import com.dfpt.canonical.model.OutboxStatus;
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
+import org.springframework.data.jpa.repository.Modifying;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
+import org.springframework.stereotype.Repository;
+
+import jakarta.persistence.LockModeType;
+import java.time.LocalDateTime;
+import java.util.List;
+import java.util.UUID;
+
+@Repository
+public interface OutboxEventRepository extends JpaRepository<OutboxEvent, UUID> {
+    
+    /**
+     * Find events with NEW status for processing
+     * Uses pessimistic locking to prevent concurrent processing
+     */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT o FROM OutboxEvent o WHERE o.status = :status ORDER BY o.createdAt ASC")
+    List<OutboxEvent> findByStatusWithLock(@Param("status") OutboxStatus status);
+    
+    /**
+     * Find events by status without locking (for monitoring)
+     */
+    List<OutboxEvent> findByStatusOrderByCreatedAtAsc(OutboxStatus status);
+    
+    /**
+     * Find failed events that can be retried
+     */
+    @Query("SELECT o FROM OutboxEvent o WHERE o.status = 'FAILED' AND o.retryCount < o.maxRetries ORDER BY o.createdAt ASC")
+    List<OutboxEvent> findFailedEventsForRetry();
+    
+    /**
+     * Find events by aggregate ID (for debugging/tracking)
+     */
+    List<OutboxEvent> findByAggregateIdOrderByCreatedAtAsc(UUID aggregateId);
+    
+    /**
+     * Find events by aggregate type and status
+     */
+    List<OutboxEvent> findByAggregateTypeAndStatusOrderByCreatedAtAsc(String aggregateType, OutboxStatus status);
+    
+    /**
+     * Find events older than specified time for cleanup
+     */
+    @Query("SELECT o FROM OutboxEvent o WHERE o.status = 'COMPLETED' AND o.processedAt < :before")
+    List<OutboxEvent> findCompletedEventsBefore(@Param("before") LocalDateTime before);
+    
+    /**
+     * Count events by status (for monitoring)
+     */
+    long countByStatus(OutboxStatus status);
+    
+    /**
+     * Find events by Redis stream ID
+     */
+    OutboxEvent findByRedisStreamId(String redisStreamId);
+    
+    /**
+     * Bulk update status for cleanup operations
+     */
+    @Modifying
+    @Query("DELETE FROM OutboxEvent o WHERE o.status = 'COMPLETED' AND o.processedAt < :before")
+    int deleteCompletedEventsBefore(@Param("before") LocalDateTime before);
+    
+    /**
+     * Find pending events older than specified time (for timeout handling)
+     */
+    @Query("SELECT o FROM OutboxEvent o WHERE o.status = 'PENDING' AND o.processedAt < :timeout ORDER BY o.createdAt ASC")
+    List<OutboxEvent> findPendingEventsOlderThan(@Param("timeout") LocalDateTime timeout);
+    
+    /**
+     * Find events by stream name and status
+     */
+    List<OutboxEvent> findByStreamNameAndStatusOrderByCreatedAtAsc(String streamName, OutboxStatus status);
+    
+    /**
+     * Count total events for monitoring
+     */
+    @Query("SELECT COUNT(o) FROM OutboxEvent o")
+    long countAllEvents();
+    
+    /**
+     * Find recent events for monitoring (last N hours)
+     */
+    @Query("SELECT o FROM OutboxEvent o WHERE o.createdAt >= :since ORDER BY o.createdAt DESC")
+    List<OutboxEvent> findRecentEvents(@Param("since") LocalDateTime since);
+}

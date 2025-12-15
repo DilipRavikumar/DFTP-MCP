@@ -1,0 +1,58 @@
+# Docker ignore file for Can_ser service
+
+# Build artifacts
+target/
+*.jar
+*.war
+*.class
+
+# IDE files
+.vscode/
+.idea/
+*.iml
+*.ipr
+*.iws
+.project
+.classpath
+.settings/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Version control
+.git/
+.gitignore
+
+# Logs
+logs/
+*.log
+
+# Temporary files
+temp/
+tmp/
+*.tmp
+
+# Maven wrapper
+.mvn/wrapper/maven-wrapper.jar
+
+# Docker files (except Dockerfile)
+docker-compose.yml
+*.md
+README.md
+
+# Configuration files that shouldn't be in container
+application-local.yml
+application-dev.yml
+*.env
+.env*
+
+# Test files
+src/test/
+
+# Node modules (if any)
+node_modules/
+
+# Coverage reports
+coverage/
+*.coverage

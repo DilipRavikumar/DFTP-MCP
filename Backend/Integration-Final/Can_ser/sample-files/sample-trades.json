@@ -1,0 +1,69 @@
+{
+  "trades": [
+    {
+      "originatorType": "1",
+      "firmNumber": 1,
+      "fundNumber": 1,
+      "transactionType": "B",
+      "transactionId": "TXN0000000000001",
+      "tradeDateTime": "01012025093000",
+      "dollarAmount": 150.00,
+      "clientName": "JOHN DOE",
+      "ssn": "123456789",
+      "dob": "01011990",
+      "shareQuantity": 250.00
+    },
+    {
+      "originatorType": "0",
+      "firmNumber": 2,
+      "fundNumber": 2,
+      "transactionType": "S",
+      "transactionId": "TXN0000000000002",
+      "tradeDateTime": "02012025101500",
+      "dollarAmount": 0.00,
+      "clientName": "JANE SMITH",
+      "ssn": "987654321",
+      "dob": "15071985",
+      "shareQuantity": 150.00
+    },
+    {
+      "originatorType": "1",
+      "firmNumber": 3,
+      "fundNumber": 3,
+      "transactionType": "B",
+      "transactionId": "TXN0000000000003",
+      "tradeDateTime": "03012025143000",
+      "dollarAmount": 250.00,
+      "clientName": "ROBERT WILSON",
+      "ssn": "456789123",
+      "dob": "02021992",
+      "shareQuantity": 500.00
+    },
+    {
+      "originatorType": "0",
+      "firmNumber": 4,
+      "fundNumber": 4,
+      "transactionType": "S",
+      "transactionId": "TXN0000000000004",
+      "tradeDateTime": "04012025092030",
+      "dollarAmount": 0.00,
+      "clientName": "MARIA GARCIA",
+      "ssn": "321456987",
+      "dob": "11111988",
+      "shareQuantity": 200.00
+    },
+    {
+      "originatorType": "1",
+      "firmNumber": 5,
+      "fundNumber": 5,
+      "transactionType": "B",
+      "transactionId": "TXN0000000000005",
+      "tradeDateTime": "05012025144520",
+      "dollarAmount": 125.00,
+      "clientName": "DAVID LEE",
+      "ssn": "654321789",
+      "dob": "09061993",
+      "shareQuantity": 300.00
+    }
+  ]
+}

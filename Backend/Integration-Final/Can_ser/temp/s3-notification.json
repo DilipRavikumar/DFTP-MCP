@@ -1,0 +1,18 @@
+{
+  "QueueConfigurations": [
+    {
+      "QueueArn": "arn:aws:sqs:us-east-2:013001369145:simulator-trade-queue",
+      "Events": ["s3:ObjectCreated:*"],
+      "Filter": {
+        "Key": {
+          "FilterRules": [
+            {
+              "Name": "prefix",
+              "Value": "incoming/"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

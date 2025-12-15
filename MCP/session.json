@@ -1,0 +1,10 @@
+{
+    "access_token": "mock-token-distributor",
+    "scope": "MutualFunds",
+    "realm_access": {
+        "roles": [
+            "distributor",
+            "basic_user"
+        ]
+    }
+}

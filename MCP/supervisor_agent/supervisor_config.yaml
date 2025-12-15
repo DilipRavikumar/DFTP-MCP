@@ -1,0 +1,79 @@
+orchestrator:
+  name: "System Orchestrator"
+  description: "Coordinates specialized agents to handle different domains"
+  llm:
+    provider: "bedrock"
+    model_id: "us.amazon.nova-pro-v1:0"
+    region: "us-east-2"
+    temperature: 0.2
+    max_tokens: 1024
+  system_prompt: |
+    You are a helpful system orchestrator that coordinates specialized agents.
+    You can delegate tasks to:
+    - position_agent: For calculating positions, submitting orders, fetching NAV data (requires MutualFunds, Assets, or Wealth scope)
+    - order_details_agent: For general trade order details and routing (requires MutualFunds, Assets, or General scope)
+    - order_ingestion_agent: For file uploads and trade simulations (requires MutualFunds, Assets, or ACCOUNT_MANAGER scope)
+    - authorization_agent: For checking user scope, token, or roles
+    
+    IMPORTANT: Each agent validates scope before processing. If a user's scope doesn't match the required scope for an agent, the request will be rejected with an "Unauthorized" message.
+    Break down complex requests into appropriate tool calls and coordinate the results.
+
+agents:
+  - name: "order_ingestion_agent"
+    description: "Handles file uploads and trade simulations. Use when user wants to upload files, check file existence, or run trade simulations."
+    module_path: "Order_Ingestion_Agent.agent2.TradeSimulateSpecific"
+    tools_from_module: ["process_request"]
+    llm:
+      provider: "bedrock"
+      model_id: "us.amazon.nova-pro-v1:0"
+      region: "us-east-2"
+      temperature: 0.1
+      max_tokens: 512
+    system_prompt: |
+      You are an order ingestion assistant.
+      Delegate requests related to file checking, uploading, or simulating trades to the process_request tool.
+
+  - name: "order_details_agent"
+    description: "MANDATORY TOOL: Use for ALL interactions involving trade, valuation,settlement, exceptions, simulator activity, S3/MQ notifications, and canonicalization.This includes: creating or retrieving simulated trades, capturing raw trade data, parsing/canonicalizing trades, performing valuation calculations, confirming/settling trades, checking settlement status, and retrieving or raising exceptions. Use for ALL order status queries AND order ID lookups (e.g. 'state of order', 'status for ID'). Returns real data. Use for: checking order status by ID, querying order details, getting orders by state. DO NOT use position_agent for this. "
+    module_path: "Order_Details_Agent.agent1"
+    tools_from_module: ["process_request"]
+    llm:
+      provider: "bedrock"
+      model_id: "us.amazon.nova-pro-v1:0"
+      region: "us-east-2"
+      temperature: 0.0
+      max_tokens: 512
+    system_prompt: |
+      You are an order details assistant.
+      Delegate general trade inquiries to the process_request tool.
+
+  - name: "position_agent"
+    description: "Calculates positions and deals with funds/NAVs. Use ONLY for 'calculate position', 'submit order', 'fund number', or 'NAV'. DO NOT use for general order status/state queries."
+    module_path: "Position_Agent.src.position.main"
+    tools_from_module: ["process_request", "submit_order", "get_nav", "calculate_position"]
+    llm:
+      provider: "bedrock"
+      model_id: "us.amazon.nova-pro-v1:0"
+      region: "us-east-2"
+      temperature: 0.0
+      max_tokens: 512
+    system_prompt: |
+      You are a position calculation assistant.
+      Delegate complex workflows to "process_request".
+      Use "submit_order" to directly submit an order.
+      Use "get_nav" to directly fetch NAV data.
+      Use "calculate_position" to directly calculate a position if you have order/nav JSON.
+
+  - name: "authorization_agent"
+    description: "Handles authorization inquiries. Use for checking user scope, token, or roles."
+    module_path: "Authorization_Agent.wrapper"
+    tools_from_module: ["process_request"]
+    llm:
+      provider: "bedrock"
+      model_id: "us.amazon.nova-pro-v1:0"
+      region: "us-east-2"
+      temperature: 0.1
+      max_tokens: 512
+    system_prompt: |
+      You are an authorization assistant.
+      Delegate authorization inquiries to the process_request tool.
