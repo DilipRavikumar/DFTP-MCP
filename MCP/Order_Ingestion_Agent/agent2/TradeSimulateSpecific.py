@@ -1,112 +1,31 @@
-from typing import Any, Dict, Optional
+import os
 import re
 import json
-import os
-import asyncio
 import traceback
-import base64
-import tempfile
-import io
 import httpx
-
-
-from langgraph.graph import StateGraph, START, END
+import asyncio
+from typing import Any, Dict, Optional
 from typing_extensions import TypedDict
 
-
+from langgraph.graph import StateGraph, START, END
 from langchain_aws import ChatBedrock
 from langchain_mcp_adapters.client import MultiServerMCPClient
 
 
-try:
-    from dotenv import load_dotenv
-    load_dotenv()
-except Exception:
-    pass
+# --------------------------------------------------------
+# ENVIRONMENT VARIABLES + ALLOWED SCOPES
+# --------------------------------------------------------
+MCP_GATEWAY_URL = os.getenv("MCP_GATEWAY_URL", "http://127.0.0.1:8000/mcp")
+ROUTER_MODEL_ID = os.getenv("ROUTER_MODEL_ID", "us.amazon.nova-pro-v1:0")
+AWS_REGION = os.getenv("AWS_REGION", "us-east-2")
+TRADE_SIM_URL = os.getenv("TRADE_SIMULATOR_URL", "http://localhost:8081")
+
+ALLOWED_SCOPES = ["MutualFunds", "Assets", "ACCOUNT_MANAGER"]
 
 
-MCP_GATEWAY_URL = os.environ.get("MCP_GATEWAY_URL", "http://127.0.0.1:8000/mcp")
-MCP_GATEWAY_TRANSPORT = os.environ.get("MCP_GATEWAY_TRANSPORT", "streamable_http")
-ROUTER_MODEL_ID = os.environ.get("ROUTER_MODEL_ID", "us.amazon.nova-pro-v1:0")
-AWS_REGION = os.environ.get("AWS_REGION", "us-east-2")
-
-
-
-
-def build_mcp_client() -> MultiServerMCPClient:
-    return MultiServerMCPClient(
-        {
-            "gateway": {
-                "transport": MCP_GATEWAY_TRANSPORT,
-                "url": MCP_GATEWAY_URL,
-            }
-        }
-    )
-
-
-
-
-def llm_invoke_sync(model, prompt_text: str) -> str:
-    if hasattr(model, "ainvoke"):
-        try:
-            resp = asyncio.run(model.ainvoke(prompt_text))
-            return getattr(resp, "content", None) or str(resp)
-        except RuntimeError:
-            pass
-        except Exception:
-            try:
-                if hasattr(model, "invoke"):
-                    resp = model.invoke(prompt_text)
-                    return getattr(resp, "content", None) or str(resp)
-            except Exception:
-                pass
-
-
-    if hasattr(model, "invoke"):
-        resp = model.invoke(prompt_text)
-        return getattr(resp, "content", None) or str(resp)
-
-
-    raise RuntimeError("Model has neither invoke nor ainvoke")
-
-
-
-
-def call_mcp_tool_sync(tools: list, tool_name: str, tool_args: Dict[str, Any]) -> Any:
-    tool_map = {t.name.lower(): t for t in tools}
-    tool = tool_map.get(tool_name.lower())
-    if tool is None:
-        raise ValueError(f"Tool '{tool_name}' not found. Available: {[t.name for t in tools]}")
-
-
-    if hasattr(tool, "ainvoke"):
-        try:
-            return asyncio.run(tool.ainvoke(tool_args))
-        except RuntimeError:
-            pass
-        except Exception:
-            pass
-
-
-    if hasattr(tool, "invoke"):
-        try:
-            return tool.invoke(tool_args)
-        except Exception as sync_exc:
-            if hasattr(tool, "ainvoke"):
-                try:
-                    return asyncio.run(tool.ainvoke(tool_args))
-                except Exception as async_exc2:
-                    raise RuntimeError(
-                        f"Tool '{tool_name}' failed sync invoke ({sync_exc}) and async invoke ({async_exc2})."
-                    ) from async_exc2
-            raise
-
-
-    raise RuntimeError(f"Tool '{tool_name}' has no invoke/ainvoke method.")
-
-
-
-
+# --------------------------------------------------------
+# STATE DEFINITION
+# --------------------------------------------------------
 class CheckUploadState(TypedDict):
     user_input: str
     file_path: Optional[str]
@@ -117,302 +36,186 @@ class CheckUploadState(TypedDict):
     message: Optional[str]
 
 
+# --------------------------------------------------------
+# SCOPE EXTRACTION & VALIDATION
+# --------------------------------------------------------
+def extract_scope_and_request(text: str):
+    scope = "unknown"
+    request = text
+
+    if "SCOPE:" in text and "REQUEST:" in text:
+        for part in text.split("|"):
+            part = part.strip()
+            if part.startswith("SCOPE:"):
+                scope = part.replace("SCOPE:", "").strip()
+            elif part.startswith("REQUEST:"):
+                request = part.replace("REQUEST:", "").strip()
+
+    return scope, request
 
 
-def build_check_and_upload_graph(router_model, mcp_tools):
-    def parse_user_input(text: str) -> Dict[str, Any]:
-        m_fp = re.search(r'([A-Za-z0-9_\-./\\]+(?:\.csv|\.zip|\.txt|\.json|\.xml|\.dat))', text)
-        file_path = m_fp.group(1).strip() if m_fp else None
+def validate_scope(scope: str):
+    return scope in ALLOWED_SCOPES
 
 
-        if not file_path:
-            m_name = re.search(r'\b([A-Za-z0-9_\-]+\.(csv|zip|txt|json|xml|dat))\b', text)
-            file_path = m_name.group(1) if m_name else None
+# --------------------------------------------------------
+# MCP CLIENT
+# --------------------------------------------------------
+def build_mcp_client():
+    return MultiServerMCPClient(
+        {"gateway": {"transport": "streamable_http", "url": MCP_GATEWAY_URL}}
+    )
 
 
-        upload_requested = bool(re.search(r"\b(upload|post|send|submit|put)\b", text, flags=re.I))
-        check_requested = bool(re.search(r"\b(exists|exist|check|status|already)\b", text, flags=re.I))
+# --------------------------------------------------------
+# SIMPLE REQUEST PARSER
+# --------------------------------------------------------
+def parse_request(text: str):
+    file_match = re.search(r'([\w./-]+\.(csv|txt|zip|json|xml|dat))', text)
+    file_path = file_match.group(1) if file_match else None
+
+    upload_flag = "upload" in text.lower()
+    check_flag = "check" in text.lower() or "exists" in text.lower()
+
+    return {
+        "file_path": file_path,
+        "upload_requested": upload_flag,
+        "check_requested": check_flag,
+    }
 
 
-        if re.search(r"\b(upload).*(if not exist|if not exists|if not)\b", text, flags=re.I):
-            upload_requested = True
-            check_requested = True
+# --------------------------------------------------------
+# EXISTENCE CHECK
+# --------------------------------------------------------
+def check_exists(tools, file_path: str):
+    tool = next((t for t in tools if "exist" in t.name.lower()), None)
+    if not tool:
+        return {"error": "fileExists tool not found"}
+
+    try:
+        return asyncio.run(tool.ainvoke({"fileId": file_path}))
+    except:
+        return {"error": "fileExists tool failed"}
 
 
-        if re.search(r"\b(check if).*(exists|exist)\b", text, flags=re.I):
-            check_requested = True
+# --------------------------------------------------------
+# UPLOAD TO /simulate/upload
+# --------------------------------------------------------
+def upload_file(file_path: str):
+    file_key = os.path.basename(file_path)
 
+    if os.path.exists(file_path):
+        with open(file_path, "rb") as f:
+            content = f.read()
+    else:
+        content = file_path.encode()
 
-        return {"file_path": file_path, "upload_requested": upload_requested, "check_requested": check_requested}
-
-
-    def parse_node(state: CheckUploadState) -> Dict[str, Any]:
-        parsed = parse_user_input(state["user_input"])
-        file_path = parsed["file_path"]
-        upload_requested = parsed["upload_requested"]
-        check_requested = parsed["check_requested"]
-
-
-        if not file_path and not (upload_requested or check_requested):
-            system_prompt = (
-                "Extract exactly this JSON from the user's request (return JSON only):\n"
-                '{ "file_path": <string|null>, "upload_requested": <true|false>, "check_requested": <true|false> }\n'
-                "Use null/false for missing values."
+    try:
+        with httpx.Client() as client:
+            res = client.post(
+                f"{TRADE_SIM_URL}/simulate/upload",
+                params={"key": file_key},
+                files={"file": (file_key, content)}
             )
-            prompt = system_prompt + "\n\nUser: " + state["user_input"]
-            try:
-                text = llm_invoke_sync(router_model, prompt)
-                try:
-                    data = json.loads(text)
-                except json.JSONDecodeError:
-                    s = text.find("{")
-                    e = text.rfind("}") + 1
-                    if s != -1 and e > s:
-                        try:
-                            data = json.loads(text[s:e])
-                        except Exception:
-                            data = {"file_path": None, "upload_requested": False, "check_requested": False}
-                    else:
-                        data = {"file_path": None, "upload_requested": False, "check_requested": False}
-                file_path = data.get("file_path") or file_path
-                upload_requested = bool(data.get("upload_requested", upload_requested))
-                check_requested = bool(data.get("check_requested", check_requested))
-            except Exception:
-                pass
+
+        if res.status_code == 200:
+            return {"s3_url": res.text.strip()}
+        return {"error": res.text}
+
+    except Exception as e:
+        return {"error": str(e)}
 
 
-        message = None
-        if not file_path:
-            message = "Could not find a file path or filename in the request."
+# --------------------------------------------------------
+# BUILD LANGGRAPH AGENT
+# --------------------------------------------------------
+def build_agent(model, tools):
 
+    def parse_node(state):
+        parsed = parse_request(state["user_input"])
+        return {**parsed, "message": None}
 
-        return {
-            "file_path": file_path,
-            "upload_requested": upload_requested,
-            "check_requested": check_requested,
-            "exists_result": None,
-            "upload_result": None,
-            "message": message,
-        }
+    def exists_node(state):
+        if not state["file_path"]:
+            return {"exists_result": None, "message": "No file path detected"}
+        return {"exists_result": check_exists(tools, state["file_path"])}
 
+    def upload_node(state):
+        if not state["file_path"]:
+            return {"upload_result": None, "message": "Missing file path"}
+        return {"upload_result": upload_file(state["file_path"])}
 
-    def exists_node(state: CheckUploadState) -> Dict[str, Any]:
-        file_path = state.get("file_path")
-        if not file_path:
-            return {"exists_result": None, "message": "No file path; skipping existence check."}
+    # -------- FIXED LOGIC (NO MORE list.get() ERROR) --------
+    def parse_exists_result(exists_result):
+        """
+        Normalizes exists_result to a boolean.
+        Handles:
+          - dict
+          - list of dicts
+          - missing values
+        """
+        if isinstance(exists_result, dict):
+            return exists_result.get("result") is True or exists_result.get("exists") is True
 
+        if isinstance(exists_result, list) and len(exists_result) > 0:
+            first = exists_result[0]
+            if isinstance(first, dict):
+                return first.get("result") is True or first.get("exists") is True
 
-        tool_map = {t.name.lower(): t for t in mcp_tools}
-        exists_tool_obj = tool_map.get("fileexists")
-        if not exists_tool_obj:
-            exists_tool_obj = next((t for t in mcp_tools if "exist" in t.name.lower()), None)
-            if not exists_tool_obj:
-                return {"exists_result": None, "message": "fileExists tool not found."}
+        return False
 
-
-        try:
-            obs = call_mcp_tool_sync(mcp_tools, exists_tool_obj.name, {"fileId": file_path})
-            return {"exists_result": obs, "message": f"Checked existence via {exists_tool_obj.name}."}
-        except Exception as e:
-            tb = traceback.format_exc()
-            return {"exists_result": None, "message": f"fileExists error: {e}\n{tb}"}
-
-
-    def upload_node(state: CheckUploadState) -> Dict[str, Any]:
-        file_path = state.get("file_path")
-        if not file_path:
-            return {"upload_result": None, "message": "No file path; skipping upload."}
-
-
-        try:
-            file_content = None
-            file_key = os.path.basename(file_path)
-            message_detail = ""
-           
-            if os.path.exists(file_path):
-                with open(file_path, 'rb') as f:
-                    file_content = f.read()
-                message_detail = f"Read {len(file_content)} bytes from local file: {file_path}"
-            else:
-                file_content = file_path.encode('utf-8')
-                message_detail = f"Using filename as content: {file_path}"
-           
-            # Save file to ./files directory
-            files_dir = os.path.join(os.getcwd(), "files")
-            if not os.path.exists(files_dir):
-                os.makedirs(files_dir)
-           
-            files_path = os.path.join(files_dir, file_key)
-            with open(files_path, 'wb') as f:
-                f.write(file_content)
-           
-            # Call /simulate/upload endpoint directly via HTTP POST for S3 upload
-            trade_simulator_url = os.environ.get("TRADE_SIMULATOR_URL", "http://localhost:8081")
-            upload_endpoint = f"{trade_simulator_url}/simulate/upload"
-           
-            try:
-                with httpx.Client() as client:
-                    # Prepare multipart form data with the saved file
-                    files_payload = {
-                        'file': (file_key, file_content, 'application/octet-stream')
-                    }
-                    params = {
-                        'key': file_key
-                    }
-                   
-                    print(f"[Order Ingestion] Uploading '{file_key}' to {upload_endpoint}")
-                    response = client.post(
-                        upload_endpoint,
-                        files=files_payload,
-                        params=params,
-                        timeout=30.0
-                    )
-                   
-                    print(f"[Order Ingestion] Upload response status: {response.status_code}")
-                   
-                    if response.status_code == 200:
-                        s3_url = response.text.strip()
-                        print(f"[Order Ingestion] S3 upload successful: {s3_url}")
-                        return {
-                            "upload_result": s3_url,
-                            "message": f"File '{file_key}' successfully uploaded to S3. {message_detail}. S3 URL: {s3_url}"
-                        }
-                    else:
-                        error_detail = response.text
-                        print(f"[Order Ingestion] S3 upload failed: {error_detail}")
-                        return {
-                            "upload_result": None,
-                            "message": f"S3 upload failed with HTTP {response.status_code}. Response: {error_detail}. File saved locally to ./files."
-                        }
-            except Exception as http_err:
-                print(f"[Order Ingestion] HTTP error: {str(http_err)}")
-                return {
-                    "upload_result": None,
-                    "message": f"HTTP request to /simulate/upload failed: {str(http_err)}. File saved to ./files at: {files_path}"
-                }
-        except Exception as e:
-            tb = traceback.format_exc()
-            return {"upload_result": None, "message": f"Upload error: {e}\n{tb}"}
-
-
-    def should_check(state: CheckUploadState):
-        if state.get("check_requested") or state.get("upload_requested"):
+    def go_exists(state):
+        if state["upload_requested"] or state["check_requested"]:
             return "exists_node"
         return END
 
+    def go_upload(state):
+        exists_result = state.get("exists_result")
+        exists_flag = parse_exists_result(exists_result)
 
-    def should_upload_after_exists(state: CheckUploadState):
-        exists = state.get("exists_result")
-        upload_req = state.get("upload_requested")
-       
-        exists_bool = False
-       
-        if isinstance(exists, str):
-            try:
-                exists_data = json.loads(exists)
-                if isinstance(exists_data, dict) and "result" in exists_data:
-                    exists_bool = bool(exists_data["result"])
-            except (json.JSONDecodeError, TypeError):
-                pass
-       
-        elif isinstance(exists, dict):
-            for k in ("result", "exists", "fileExists", "existsFlag", "present"):
-                if k in exists:
-                    exists_bool = bool(exists[k])
-                    break
-       
-        elif isinstance(exists, bool):
-            exists_bool = exists
-
-
-        if upload_req and not exists_bool:
+        if state["upload_requested"] and not exists_flag:
             return "upload_node"
         return END
-
+    # ---------------------------------------------------------
 
     graph = StateGraph(CheckUploadState)
+
     graph.add_node("parse_node", parse_node)
     graph.add_node("exists_node", exists_node)
     graph.add_node("upload_node", upload_node)
 
-
     graph.add_edge(START, "parse_node")
-    graph.add_conditional_edges("parse_node", should_check, ["exists_node", END])
-    graph.add_conditional_edges("exists_node", should_upload_after_exists, ["upload_node", END])
+    graph.add_conditional_edges("parse_node", go_exists, ["exists_node", END])
+    graph.add_conditional_edges("exists_node", go_upload, ["upload_node", END])
     graph.add_edge("upload_node", END)
 
-
-    agent = graph.compile()
-    return agent
+    return graph.compile()
 
 
-
-
-ALLOWED_SCOPES = ["MutualFunds", "Assets", "ACCOUNT_MANAGER"]
-
-
-def extract_scope_from_request(request: str) -> tuple[str, str]:
-    scope = "unknown"
-    actual_request = request
-   
-    if "SCOPE:" in request and "|REQUEST:" in request:
-        try:
-            parts = request.split("|")
-            for part in parts:
-                if part.startswith("SCOPE:"):
-                    scope = part.replace("SCOPE:", "").strip()
-                elif part.startswith("REQUEST:"):
-                    actual_request = part.replace("REQUEST:", "").strip()
-        except:
-            pass
-           
-    return scope, actual_request
-
-
-def validate_scope(scope: str) -> bool:
-    return scope in ALLOWED_SCOPES
-
-
+# --------------------------------------------------------
+# PUBLIC FUNCTION — MAIN ENTRYPOINT FOR AGENT
+# --------------------------------------------------------
 def process_request(request: str) -> str:
-    scope, actual_request = extract_scope_from_request(request)
-   
+    # Extract scope
+    scope, actual_request = extract_scope_and_request(request)
+
+    # Validate scope
     if not validate_scope(scope):
-        return f"Unauthorized: Scope '{scope}' is not allowed for Order Ingestion Agent. Required scopes: {', '.join(ALLOWED_SCOPES)}"
-   
-    mcp_tools = []
+        return f"Unauthorized: Scope '{scope}' is not allowed. Allowed: {', '.join(ALLOWED_SCOPES)}"
+
+    # Load tools
     try:
         client = build_mcp_client()
-       
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-       
-        async def get_tools_safe():
-            try:
-                return await client.get_tools()
-            except Exception as e:
-                print(f"Error getting tools: {e}")
-                return []
+        tools = asyncio.run(client.get_tools())
+    except:
+        tools = []
 
+    # Model (not heavily used)
+    model = ChatBedrock(model_id=ROUTER_MODEL_ID, region_name=AWS_REGION)
 
-        try:
-            mcp_tools = loop.run_until_complete(asyncio.wait_for(get_tools_safe(), timeout=2.0))
-        except asyncio.TimeoutError:
-            print("Warning: MCP tool retrieval timed out in Order Ingestion Agent. Proceeding with no tools.")
-        finally:
-            loop.close()
-    except Exception as e:
-        print(f"Warning initializing MCP tools in Order Ingestion Agent: {e}")
-        return f"Error: Could not initialize MCP tools: {e}"
+    # Build graph
+    agent = build_agent(model, tools)
 
-
-    router_model = ChatBedrock(
-        model_id=ROUTER_MODEL_ID,
-        region_name=AWS_REGION,
-    )
-
-
-    agent = build_check_and_upload_graph(router_model, mcp_tools)
-   
     init_state: CheckUploadState = {
         "user_input": actual_request,
         "file_path": None,
@@ -423,113 +226,16 @@ def process_request(request: str) -> str:
         "message": None,
     }
 
-
     try:
-        final_state = agent.invoke(init_state)
-       
-        parts = []
-       
-        if final_state.get("message"):
-            parts.append(f"Status: {final_state['message']}")
-       
-        if final_state.get("file_path"):
-            parts.append(f"File: {final_state['file_path']}")
-       
-        if final_state.get("exists_result") is not None:
-            parts.append(f"Exists check: {json.dumps(final_state['exists_result'], indent=2, default=str)}")
-       
-        if final_state.get("upload_result") is not None:
-            parts.append(f"Upload result: {json.dumps(final_state['upload_result'], indent=2, default=str)}")
-       
-        return "\n".join(parts) if parts else "Processed request (no details returned)."
-       
-    except Exception as e:
-        return f"Agent execution error: {traceback.format_exc()}"
+        final = agent.invoke(init_state)
+    except Exception:
+        return traceback.format_exc()
 
+    # Build clean output
+    out = []
+    if final.get("message"): out.append(final["message"])
+    if final.get("file_path"): out.append(f"File: {final['file_path']}")
+    if final.get("exists_result"): out.append(f"Exists: {final['exists_result']}")
+    if final.get("upload_result"): out.append(f"Upload: {final['upload_result']}")
 
-
-
-
-
-def main():
-    client = build_mcp_client()
-    try:
-        mcp_tools = asyncio.run(client.get_tools())
-    except Exception as e:
-        print("Failed to retrieve MCP tools:", e)
-        raise
-
-
-    print("Available MCP tools:", [t.name for t in mcp_tools])
-
-
-    router_model = ChatBedrock(
-        model_id=ROUTER_MODEL_ID,
-        region_name=AWS_REGION,
-    )
-
-
-    agent = build_check_and_upload_graph(router_model, mcp_tools)
-    print("Check+Upload LangGraph agent ready. Type 'exit' to quit.\n")
-
-
-    while True:
-        try:
-            user_input = input("You: ").strip()
-        except (EOFError, KeyboardInterrupt):
-            print("\nBye!")
-            break
-
-
-        if not user_input:
-            continue
-        if user_input.lower() in ("exit", "quit"):
-            print("Bye!")
-            break
-
-
-        init_state: CheckUploadState = {
-            "user_input": user_input,
-            "file_path": None,
-            "upload_requested": False,
-            "check_requested": False,
-            "exists_result": None,
-            "upload_result": None,
-            "message": None,
-        }
-
-
-        try:
-            final_state = agent.invoke(init_state)
-        except Exception as e:
-            print("Agent execution error:", e)
-            print(traceback.format_exc())
-            continue
-
-
-        print("\n--- Agent run summary ---")
-        print("Parsed file_path:", final_state.get("file_path"))
-        print("Upload requested:", final_state.get("upload_requested"))
-        print("Check requested:", final_state.get("check_requested"))
-        print("Message:", final_state.get("message"))
-
-
-        print("\nfileExists result:")
-        try:
-            print(json.dumps(final_state.get("exists_result"), indent=2, default=str))
-        except Exception:
-            print(final_state.get("exists_result"))
-
-
-        print("\nUpload result:")
-        try:
-            print(json.dumps(final_state.get("upload_result"), indent=2, default=str))
-        except Exception:
-            print(final_state.get("upload_result"))
-        print("\n---\n")
-
-
-
-
-if __name__ == "__main__":
-    main()
+    return "\n".join(out) or "Done."
