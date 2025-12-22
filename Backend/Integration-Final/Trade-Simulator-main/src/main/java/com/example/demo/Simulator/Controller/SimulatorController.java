@@ -9,12 +9,14 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
-import org.springframework.web.multipart.MultipartFile;
+
 
 import com.example.demo.Simulator.Service.S3UploadService;
 import com.example.demo.Simulator.Service.SimulatorService;
 
 import java.time.Instant;
+import java.util.Base64;
+import java.util.Map;
 
 @RestController
 @RequestMapping("/simulate")
@@ -49,44 +51,72 @@ public class SimulatorController {
         }
     }
 
-    @PostMapping(value = "/upload", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
-    @Operation(summary = "Upload a single file to S3",
-               description = "Upload a single multipart file and store it in the configured S3 bucket. Optionally supply `key`. Returns the S3 URL when successful.")
-    @ApiResponses(value = {
-        @ApiResponse(responseCode = "200", description = "File uploaded successfully"),
-        @ApiResponse(responseCode = "400", description = "Bad request (no file)"),
-        @ApiResponse(responseCode = "503", description = "S3 service not available/configured"),
-        @ApiResponse(responseCode = "500", description = "Error during upload")
-    })
-    public ResponseEntity<String> uploadSingleFile(
-            @RequestPart(name = "file", required = true) MultipartFile file,
-            @RequestParam(name = "key", required = false) String key) {
+    @PostMapping(
+    value = "/upload",
+    consumes = MediaType.APPLICATION_JSON_VALUE,
+    produces = MediaType.APPLICATION_JSON_VALUE
+)
+@Operation(
+    summary = "Upload a file to S3 (Base64 JSON)",
+    description = "Uploads a file using Base64-encoded JSON payload instead of multipart"
+)
+@ApiResponses(value = {
+    @ApiResponse(responseCode = "200", description = "File uploaded successfully"),
+    @ApiResponse(responseCode = "400", description = "Bad request"),
+    @ApiResponse(responseCode = "503", description = "S3 service not available"),
+    @ApiResponse(responseCode = "500", description = "Upload failed")
+})
+public ResponseEntity<Map<String, String>> uploadSingleFile(
+        @RequestBody Map<String, String> body) {
 
-        if (file == null || file.isEmpty()) {
-            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body("No file provided or file is empty");
-        }
+    String fileBase64 = body.get("fileBase64");
+    String filename = body.get("filename");
+    String key = body.get("key");
 
-        if (s3UploadService == null) {
-            return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
-                    .body("S3UploadService not available. Make sure aws.s3.enabled=true and bean is created.");
-        }
-
-        try {
-            // If no key provided -> create one using timestamp + original filename
-            String finalKey = (key == null || key.trim().isEmpty())
-                    ? Instant.now().toEpochMilli() + "_" + file.getOriginalFilename()
-                    : key;
-
-            byte[] content = file.getBytes();
-            String url = s3UploadService.uploadFileFromBytes(finalKey, content);
-
-            return ResponseEntity.ok(url);
-
-        } catch (Exception e) {
-            e.printStackTrace();
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                    .body("Failed to upload file: " + e.getMessage());
-        }
+    if (fileBase64 == null || fileBase64.isBlank()) {
+        return ResponseEntity
+                .status(HttpStatus.BAD_REQUEST)
+                .body(Map.of("result", "fileBase64 is required"));
     }
+
+    if (filename == null || filename.isBlank()) {
+        return ResponseEntity
+                .status(HttpStatus.BAD_REQUEST)
+                .body(Map.of("result", "filename is required"));
+    }
+
+    if (s3UploadService == null) {
+        return ResponseEntity
+                .status(HttpStatus.SERVICE_UNAVAILABLE)
+                .body(Map.of("result", "S3UploadService not available"));
+    }
+
+    try {
+        byte[] content = Base64.getDecoder().decode(fileBase64);
+
+        String finalKey =
+                (key == null || key.isBlank())
+                        ? Instant.now().toEpochMilli() + "_" + filename
+                        : key;
+
+        String url = s3UploadService.uploadFileFromBytes(finalKey, content);
+
+        // 🔑 CRITICAL FIX — STRUCTURED OUTPUT
+        return ResponseEntity.ok(
+                Map.of("result", url)
+        );
+
+    } catch (IllegalArgumentException e) {
+        return ResponseEntity
+                .status(HttpStatus.BAD_REQUEST)
+                .body(Map.of("result", "Invalid Base64 content"));
+
+    } catch (Exception e) {
+        e.printStackTrace();
+        return ResponseEntity
+                .status(HttpStatus.INTERNAL_SERVER_ERROR)
+                .body(Map.of("result", "Failed to upload file: " + e.getMessage()));
+    }
+}
 
 }
