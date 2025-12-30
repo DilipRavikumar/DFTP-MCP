@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "position"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "boto3>=1.42.4",
+    "fastmcp>=2.13.3",
+    "langchain>=1.1.2",
+    "langchain-aws>=1.1.0",
+    "langchain-mcp-adapters>=0.1.14",
+    "langchain-openai>=1.1.1",
+    "langgraph>=1.0.4",
+    "pydantic>=2.12.5",
+    "python-dotenv>=1.2.1",
+    "requests>=2.32.5",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["position*"]

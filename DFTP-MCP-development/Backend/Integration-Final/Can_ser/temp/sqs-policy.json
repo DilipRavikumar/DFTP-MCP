@@ -1,0 +1,20 @@
+{
+  "Version": "2012-10-17",
+  "Id": "S3-SQS-Policy",
+  "Statement": [
+    {
+      "Sid": "AllowS3ToSendMessage",
+      "Effect": "Allow",
+      "Principal": {
+        "Service": "s3.amazonaws.com"
+      },
+      "Action": "SQS:SendMessage",
+      "Resource": "arn:aws:sqs:us-east-2:013001369145:simulator-trade-queue",
+      "Condition": {
+        "ArnEquals": {
+          "aws:SourceArn": "arn:aws:s3:::simulator-trade-bucket"
+        }
+      }
+    }
+  ]
+}

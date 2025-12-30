@@ -1,0 +1,126 @@
+package rules
+
+import com.dfpt.canonical.model.CanonicalTrade;
+import com.dfpt.canonical.dto.ValidationResult;
+import com.dfpt.canonical.dto.FundDTO;
+import com.dfpt.canonical.dto.ClientDTO;
+import com.dfpt.canonical.service.RuleEngineService;
+
+global java.time.LocalTime navCutoffTime;
+global java.lang.Double minimumInvestmentAmount;
+global java.lang.String requestId;
+global RuleEngineService ruleEngineService;
+
+rule "Mandatory Fields Validation"
+when
+    $ct : CanonicalTrade(
+        originatorType == null ||
+        transactionType == null || transactionType.trim().isEmpty() ||
+        transactionId == null || transactionId.trim().isEmpty() ||
+        clientName == null || clientName.trim().isEmpty() ||
+        firmNumber == null ||
+        fundNumber == null ||
+        tradeDateTime == null ||
+        dob == null
+    )
+    $res : ValidationResult( this != null, eval(!$res.getErrors().toString().contains("Mandatory fields missing or empty.")) )
+then
+    boolean changed = ruleEngineService.handleMandatoryFields($ct, $res);
+    if (changed) update($res);
+end
+
+rule "Cutoff Time Validation"
+when
+    $ct : CanonicalTrade( tradeDateTime != null )
+    $res : ValidationResult( this != null, eval(!$res.getErrors().toString().contains("Order received after NAV cut-off")) )
+then
+    boolean changed = ruleEngineService.handleCutoff($ct, $res, navCutoffTime);
+    if (changed) update($res);
+end
+
+rule "Unknown Client"
+when
+    $ct : CanonicalTrade( clientAccountNo != null )
+    not ClientDTO( clientId == $ct.clientAccountNo )
+    $res : ValidationResult( this != null, eval(!$res.getErrors().toString().contains("Unknown client.")) )
+then
+    boolean changed = ruleEngineService.handleUnknownClient($ct, $res, (ClientDTO) null);
+    if (changed) update($res);
+end
+
+rule "Scheme Eligibility - KYC"
+when
+    $ct : CanonicalTrade( clientAccountNo != null )
+    $client : ClientDTO( clientId == $ct.clientAccountNo )
+    $res : ValidationResult( this != null, eval(!$res.getErrors().toString().contains("Investor KYC not valid for scheme")))
+then
+    boolean changed = ruleEngineService.handleKyc($ct, $res, $client);
+    if (changed) update($res);
+end
+
+rule "Unknown Fund Scheme"
+when
+    $ct : CanonicalTrade( fundNumber != null )
+    not FundDTO( fundId == $ct.fundNumber )
+    $res : ValidationResult( this != null, eval(!$res.getErrors().toString().contains("Unknown scheme/fund.")) )
+then
+    boolean changed = ruleEngineService.handleUnknownFund($ct, $res, (FundDTO) null);
+    if (changed) update($res);
+end
+
+rule "Fund Scheme Status Validation"
+when
+    $ct : CanonicalTrade( fundNumber != null )
+    $fund : FundDTO( fundId == $ct.fundNumber )
+    $res : ValidationResult( this != null, eval(!$res.getErrors().toString().contains("Scheme not open for transactions.")) )
+then
+    boolean changed = ruleEngineService.handleFundStatus($ct, $res, $fund);
+    if (changed) update($res);
+end
+
+rule "Fund Limits Validation (min/max)"
+when
+    $ct : CanonicalTrade( fundNumber != null, dollarAmount != null )
+    $fund : FundDTO( fundId == $ct.fundNumber )
+    $res : ValidationResult( this != null, eval(!$res.getErrors().toString().contains("Order amount out of allowed scheme limits.")) )
+then
+    boolean changed = ruleEngineService.handleFundLimits($ct, $res, $fund);
+    if (changed) update($res);
+end
+
+rule "Client Account Status Validation"
+when
+    $ct : CanonicalTrade( clientAccountNo != null )
+    $client : ClientDTO( clientId == $ct.clientAccountNo )
+    $res : ValidationResult( this != null, eval(!$res.getErrors().toString().contains("Investor account not active.")) )
+then
+    boolean changed = ruleEngineService.handleClientStatus($ct, $res, $client);
+    if (changed) update($res);
+end
+
+rule "BUY requires amount only"
+when
+    $ct : CanonicalTrade( transactionType != null, eval(transactionType.equals("B")) )
+    $res : ValidationResult( this != null, eval(!$res.getErrors().toString().contains("BUY")) )
+then
+    boolean changed = ruleEngineService.handleBuyOrder($ct, $res);
+    if (changed) update($res);
+end
+
+rule "SELL requires quantity only"
+when
+    $ct : CanonicalTrade( transactionType != null, eval(transactionType.equals("S")) )
+    $res : ValidationResult( this != null, eval(!$res.getErrors().toString().contains("SELL")) )
+then
+    boolean changed = ruleEngineService.handleSellOrder($ct, $res);
+    if (changed) update($res);
+end
+
+rule "SWITCH requires amount and quantity"
+when
+    $ct : CanonicalTrade( transactionType != null, eval(transactionType.equals("E")) )
+    $res : ValidationResult( this != null, eval(!$res.getErrors().toString().contains("SWITCH")) )
+then
+    boolean changed = ruleEngineService.handleSwitchOrder($ct, $res);
+    if (changed) update($res);
+end

@@ -1,0 +1,140 @@
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15-alpine
+    container_name: can_ser_postgres
+    environment:
+      POSTGRES_DB: canonical_db
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: root@123
+      PGDATA: /var/lib/postgresql/data/pgdata
+    ports:
+      - "15432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init-scripts:/docker-entrypoint-initdb.d
+    networks:
+      - can_ser_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d canonical_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # Redis for Status Streaming
+  redis:
+    image: redis:7-alpine
+    container_name: can_ser_redis
+    ports:
+      - "16379:6379"
+    volumes:
+      - redis_data:/data
+      - ./redis.conf:/usr/local/etc/redis/redis.conf
+    networks:
+      - can_ser_network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    restart: unless-stopped
+    command: redis-server /usr/local/etc/redis/redis.conf
+
+  # ActiveMQ for Message Queue
+  activemq:
+    image: webcenter/activemq:5.14.3
+    container_name: can_ser_activemq
+    environment:
+      ACTIVEMQ_ADMIN_LOGIN: admin
+      ACTIVEMQ_ADMIN_PASSWORD: admin
+      ACTIVEMQ_CONFIG_MINMEMORY: 512
+      ACTIVEMQ_CONFIG_MAXMEMORY: 1024
+    ports:
+      - "16161:61616"  # JMS port
+      - "18161:8161"    # Web console port
+    volumes:
+      - activemq_data:/data/activemq
+    networks:
+      - can_ser_network
+    healthcheck:
+      test: ["CMD-SHELL", "netstat -an | grep 61616 | grep LISTEN || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+
+  # Can_ser Application
+  can-ser:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: can_ser_app
+    environment:
+      # Database Configuration  
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/canonical_db
+      SPRING_DATASOURCE_USERNAME: postgres
+      SPRING_DATASOURCE_PASSWORD: root@123
+      
+      # Redis Configuration
+      SPRING_DATA_REDIS_HOST: redis
+      SPRING_DATA_REDIS_PORT: 6379
+      
+      # ActiveMQ Configuration
+      SPRING_ACTIVEMQ_BROKER_URL: tcp://activemq:61616
+      SPRING_ACTIVEMQ_USER: admin
+      SPRING_ACTIVEMQ_PASSWORD: admin
+      
+      # Application Configuration
+      SERVER_PORT: 8086
+      SPRING_PROFILES_ACTIVE: docker
+      
+      # AWS Configuration (for S3/SQS integration)
+      AWS_S3_BUCKET_NAME: simulator-trade-bucket
+      AWS_S3_REGION: us-east-2
+      AWS_SQS_QUEUE_NAME: simulator-trade-queue
+      AWS_SQS_ENABLED: false
+      
+      # JVM Configuration
+      JAVA_OPTS: >-
+        -Xms512m 
+        -Xmx1024m 
+        -XX:+UseG1GC 
+        -XX:+UseContainerSupport
+        -XX:MaxRAMPercentage=75.0
+        -Djava.awt.headless=true
+        -Dfile.encoding=UTF-8
+        -Duser.timezone=UTC
+    ports:
+      - "8086:8086"
+    volumes:
+      - ./temp:/app/temp
+      - ./logs:/app/logs
+    networks:
+      - can_ser_network
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:8086/actuator/health || curl -f http://localhost:8086/actuator/health || exit 1"]
+      interval: 30s
+      timeout: 15s
+      start_period: 90s
+      retries: 5
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+  activemq_data:
+    driver: local
+
+networks:
+  can_ser_network:
+    driver: bridge
+    name: can_ser_network

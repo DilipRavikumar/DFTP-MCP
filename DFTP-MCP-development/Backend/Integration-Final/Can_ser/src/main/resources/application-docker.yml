@@ -1,0 +1,100 @@
+spring:
+  datasource:
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://postgres:5432/canonical_db}
+    username: ${SPRING_DATASOURCE_USERNAME:postgres}
+    password: ${SPRING_DATASOURCE_PASSWORD:Nikitha}
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: false  # Reduced logging for Docker
+    properties:
+      hibernate:
+        format_sql: false
+        jdbc:
+          time_zone: UTC
+  sql:
+    init:
+      mode: never
+  activemq:
+    broker-url: ${SPRING_ACTIVEMQ_BROKER_URL:tcp://activemq:61616}
+    user: ${SPRING_ACTIVEMQ_USER:admin}
+    password: ${SPRING_ACTIVEMQ_PASSWORD:admin}
+  jms:
+    listener:
+      min-concurrency: 5
+      max-concurrency: 10
+  data:
+    redis:
+      host: ${SPRING_DATA_REDIS_HOST:redis}
+      port: ${SPRING_DATA_REDIS_PORT:6379}
+      timeout: 2000
+      lettuce:
+        pool:
+          max-active: 8
+          max-idle: 8
+          min-idle: 0
+
+server:
+  port: ${SERVER_PORT:8086}
+
+validation:
+  nav:
+    cutoff: "15:00"
+  minimum:
+    amount: 1000
+
+jms:
+  queue:
+    file-upload: file-upload-queue
+    order-events: order.event
+
+aws:
+  s3:
+    bucket:
+      name: ${AWS_S3_BUCKET_NAME:simulator-trade-bucket}
+    region: ${AWS_S3_REGION:us-east-2}
+  sqs:
+    queue-name: ${AWS_SQS_QUEUE_NAME:simulator-trade-queue}
+    enabled: ${AWS_SQS_ENABLED:true}
+
+file:
+  processing:
+    threads: 5
+
+temp:
+  directory: ./temp
+
+redis:
+  stream:
+    name: status-stream
+    dlq-name: status-dlq
+
+# Logging configuration for Docker
+logging:
+  level:
+    root: INFO
+    com.dfpt.canonical: INFO
+    org.springframework: WARN
+    org.hibernate: WARN
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n"
+    file: "%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n"
+  file:
+    name: /app/logs/can-ser.log
+    max-size: 100MB
+    max-history: 10
+
+# Management endpoints for health checks
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  endpoint:
+    health:
+      show-details: always
+  health:
+    db:
+      enabled: true
+    redis:
+      enabled: true
