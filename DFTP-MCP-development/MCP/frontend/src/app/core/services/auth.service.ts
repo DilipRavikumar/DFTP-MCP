@@ -7,7 +7,7 @@ import { Observable, tap } from 'rxjs';
     providedIn: 'root'
 })
 export class AuthService {
-    private apiUrl = 'http://localhost:8001/api';
+    private apiUrl = 'http://localhost:8081/api';;
 
     private tokenSignal = signal<any | null>(this.loadToken());
     isAuthenticated = computed(() => !!this.tokenSignal());
@@ -15,16 +15,14 @@ export class AuthService {
 
     constructor(private http: HttpClient, private router: Router) { }
 
-    login(credentials: { username: string, password: string }): Observable<any> {
-        return this.http.post(`${this.apiUrl}/login`, credentials).pipe(
-            tap((response: any) => {
-                if (response.tokens) {
-                    this.setToken(response.tokens);
-                    this.router.navigate(['/chat']);
-                }
-            })
-        );
-    }
+    login(credentials: { username: string, password: string }) {
+  return this.http.post(`${this.apiUrl}/login`, credentials)
+    .pipe(tap((res: any) => {
+      if (res.access_token) {
+        this.setToken(res);
+      }
+    }));
+}
 
     logout() {
         localStorage.removeItem('auth_tokens');
