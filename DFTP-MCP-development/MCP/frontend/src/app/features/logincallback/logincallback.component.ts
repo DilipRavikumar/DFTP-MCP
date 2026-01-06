@@ -8,17 +8,23 @@ import { AuthService } from '../../core/services/auth.service';
 })
 export class LoginCallbackComponent implements OnInit {
   private authService = inject(AuthService);
-  constructor(private router: Router) {}
+  constructor(private router: Router) { }
 
-  ngOnInit() {  
-    const token = new URLSearchParams(window.location.search).get('token');
+  ngOnInit() {
+    const params = new URLSearchParams(window.location.search);
+    const token = params.get('token');
+    const idToken = params.get('id_token');
+
     if (token) {
       // Store as an object with access_token property to match AuthService expectations
-      this.authService.setTokenPublic({ access_token: token });
+      this.authService.setTokenPublic({
+        access_token: token,
+        id_token: idToken
+      });
       this.router.navigate(['/chat']);
     } else {
-      console.error("No token in callback");
-      
+      // If no token, we might be returning from logout
+      this.router.navigate(['/']);
     }
   }
 }
