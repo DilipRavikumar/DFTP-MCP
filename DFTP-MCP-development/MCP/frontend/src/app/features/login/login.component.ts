@@ -113,14 +113,19 @@ export class LoginComponent {
 
     this.isLoading.set(true);
     this.error.set('');
-
     this.authService.login({ username: this.username, password: this.password })
       .subscribe({
+        next: (res) => {
+          console.log("Login SUCCESS:", res);
+        
+        },
         error: (err) => {
+          console.error("Login ERROR:", err);
           this.error.set('Login failed. Please check credentials.');
           this.isLoading.set(false);
         },
         complete: () => {
+          console.log("Login observable completed");
           this.isLoading.set(false);
         }
       });
