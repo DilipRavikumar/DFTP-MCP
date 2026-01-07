@@ -29,7 +29,6 @@ def login():
         f"{KEYCLOAK_URL}/realms/{REALM}/protocol/openid-connect/auth"
         f"?client_id={CLIENT_ID}"
         f"&response_type=code"
-        f"&scope=openid"
         f"&redirect_uri={GATEWAY_CALLBACK}"
     )
     return RedirectResponse(keycloak_login_url)
@@ -103,20 +102,23 @@ def me(request: Request):
 
     try:
         payload = jwt.decode(token, options={"verify_signature": False})
-        logger.info(f"Token payload: {payload}")  # <-- log the full payload
+        logger.info(f"Token payload: {payload}")
 
-        # Extract scope
-        scope = payload.get("scope")
-        if scope:
-            user_scope = next((s for s in scope.split() if s != "openid"), "General")
-        else:
-            roles = payload.get("realm_access", {}).get("roles", [])
-            user_scope = roles[0] if roles else "General"
+        # Scope will be only "MutualFunds"
+        user_scope = payload.get("scope", "General")
 
-        logger.info(f"Extracted scope/role: {user_scope}")  # <-- log extracted scope
+        logger.info(f"User scope: {user_scope}")
 
     except Exception as e:
         logger.error(f"Error decoding token: {e}")
-        return {"authenticated": False, "scope": "General", "error": str(e)}
+        return {
+            "authenticated": False,
+            "scope": "General",
+            "error": str(e)
+        }
 
-    return {"authenticated": True, "scope": user_scope}
+    return {
+        "authenticated": True,
+        "scope": user_scope
+    }
+
