@@ -11,20 +11,7 @@ export class LoginCallbackComponent implements OnInit {
   constructor(private router: Router) { }
 
   ngOnInit() {
-    const params = new URLSearchParams(window.location.search);
-    const token = params.get('token');
-    const idToken = params.get('id_token');
+  this.router.navigate(['/chat']);
+}
 
-    if (token) {
-      // Store as an object with access_token property to match AuthService expectations
-      this.authService.setTokenPublic({
-        access_token: token,
-        id_token: idToken
-      });
-      this.router.navigate(['/chat']);
-    } else {
-      // If no token, we might be returning from logout
-      this.router.navigate(['/']);
-    }
-  }
 }

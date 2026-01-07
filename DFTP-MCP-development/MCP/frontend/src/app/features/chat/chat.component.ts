@@ -109,7 +109,13 @@ export class ChatComponent {
   uploadingFile = signal<string | null>(null);
 
   threadId = signal<string>(crypto.randomUUID());
-  scope = this.authService.currentUserScope;
+ scope = this.authService.currentUserScope;
+
+// In ngOnInit or constructor
+ngOnInit() {
+  this.authService.fetchUser();
+}
+
 
   constructor() {
     effect(() => {

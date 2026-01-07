@@ -17,22 +17,14 @@ export class ChatService {
     constructor(private http: HttpClient, private authService: AuthService) { }
 
     async *streamChat(message: string, threadId: string): AsyncGenerator<string> {
-        const token = this.authService.getToken();
-        const scope = this.authService.currentUserScope();
-
+    
         const response = await fetch(`${this.apiUrl}/chat`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-                message,
-                thread_id: threadId,
-                scope: scope,
-                roles: [],
-                token: token?.access_token || ''
-            })
-        });
+  method: 'POST',
+  credentials: 'include',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ message, thread_id: threadId })
+});
+
 
         if (!response.body) throw new Error('No response body');
 

@@ -1,17 +1,28 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Response, Request, HTTPException
 from fastapi.responses import RedirectResponse
 import requests
+import jwt
+import logging
 
 app = FastAPI()
 
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+# -------------------------
+# Keycloak config
+# -------------------------
 KEYCLOAK_URL = "http://localhost:8180"
 REALM = "authentication"
 CLIENT_ID = "public-client"
-
-
 GATEWAY_CALLBACK = "http://localhost:8081/api/auth/callback"
 FRONTEND_CALLBACK = "http://localhost:4200/login-callback"
+# Replace with actual Keycloak public key in prod
+KEYCLOAK_PUBLIC_KEY = "YOUR_KEYCLOAK_PUBLIC_KEY_HERE"
 
+# -------------------------
+# Login redirect
+# -------------------------
 @app.get("/api/auth/login")
 def login():
     keycloak_login_url = (
@@ -23,11 +34,26 @@ def login():
     )
     return RedirectResponse(keycloak_login_url)
 
+
+@app.get("/api/auth/logout")
+def logout():
+    response = RedirectResponse(
+        url=(
+            f"{KEYCLOAK_URL}/realms/{REALM}/protocol/openid-connect/logout"
+            f"?client_id={CLIENT_ID}"
+            f"&post_logout_redirect_uri=http://localhost:4200"
+        )
+    )
+    response.delete_cookie("access_token", path="/")
+    return response
+
+
+# Callback
+# -------------------------
 @app.get("/api/auth/callback")
 def callback(code: str = None):
     if not code:
-        # If no code, assume it's a redirect from logout
-        return RedirectResponse("http://localhost:4200/")
+        return RedirectResponse(FRONTEND_CALLBACK)
 
     token_response = requests.post(
         f"{KEYCLOAK_URL}/realms/{REALM}/protocol/openid-connect/token",
@@ -39,13 +65,58 @@ def callback(code: str = None):
         },
         headers={"Content-Type": "application/x-www-form-urlencoded"}
     )
-
     token_response.raise_for_status()
+
     token_data = token_response.json()
-
     access_token = token_data.get("access_token")
-    id_token = token_data.get("id_token")
 
-    return RedirectResponse(
-        f"{FRONTEND_CALLBACK}?token={access_token}&id_token={id_token}"
+    if not access_token:
+        raise HTTPException(status_code=401, detail="Access token missing")
+
+    logger.info("Access token received, setting cookie")
+
+    redirect_response = RedirectResponse(
+        url=FRONTEND_CALLBACK,
+        status_code=302
     )
+
+    redirect_response.set_cookie(
+        key="access_token",
+        value=access_token,
+        httponly=True,
+        secure=False,     # True in prod
+        samesite="Lax",
+        path="/"
+    )
+
+    return redirect_response
+
+# -------------------------
+# Get current user info
+# -------------------------
+@app.get("/api/auth/me")
+def me(request: Request):
+    token = request.cookies.get("access_token")
+    if not token:
+        logger.info("No access_token found in cookies.")
+        return {"authenticated": False, "scope": "General"}
+
+    try:
+        payload = jwt.decode(token, options={"verify_signature": False})
+        logger.info(f"Token payload: {payload}")  # <-- log the full payload
+
+        # Extract scope
+        scope = payload.get("scope")
+        if scope:
+            user_scope = next((s for s in scope.split() if s != "openid"), "General")
+        else:
+            roles = payload.get("realm_access", {}).get("roles", [])
+            user_scope = roles[0] if roles else "General"
+
+        logger.info(f"Extracted scope/role: {user_scope}")  # <-- log extracted scope
+
+    except Exception as e:
+        logger.error(f"Error decoding token: {e}")
+        return {"authenticated": False, "scope": "General", "error": str(e)}
+
+    return {"authenticated": True, "scope": user_scope}
