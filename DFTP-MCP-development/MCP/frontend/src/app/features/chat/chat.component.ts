@@ -11,10 +11,9 @@ import { marked } from 'marked';
   imports: [CommonModule, FormsModule],
   template: `
     <div class="chat-layout">
-      <!-- Sidebar -->
       <aside class="sidebar">
         <div class="sidebar-header">
-          <h3>🤖 Orchestrator</h3>
+          <h3>Orchestrator</h3>
         </div>
         
         <div class="sidebar-info">
@@ -38,7 +37,6 @@ import { marked } from 'marked';
         </div>
       </aside>
 
-      <!-- Main Chat Area -->
       <main class="chat-main">
         <div class="messages-container" #scrollContainer>
           <div *ngIf="messages().length === 0" class="empty-state">
@@ -64,7 +62,6 @@ import { marked } from 'marked';
           </div>
         </div>
 
-        <!-- Input Area -->
         <div class="input-area">
           <div class="input-container">
             <button class="attach-btn" (click)="fileInput.click()" title="Upload File">
@@ -111,7 +108,6 @@ export class ChatComponent {
   threadId = signal<string>(crypto.randomUUID());
  scope = this.authService.currentUserScope;
 
-// In ngOnInit or constructor
 ngOnInit() {
   this.authService.fetchUser();
 }

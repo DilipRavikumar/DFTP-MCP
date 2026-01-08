@@ -28,10 +28,6 @@ logout() {
   window.location.href = `${this.apiUrl}/auth/logout`;
 }
 
-
-
-
-
  me() {
     return this.http.get<any>(`${this.apiUrl}/auth/me`, {
       withCredentials: true
@@ -42,11 +38,11 @@ logout() {
   this.me().subscribe({
     next: (res) => {
       this.isAuthenticated.set(res.authenticated);
-      this.currentUserScope.set(res.scope); // ✅ Here we update with actual scope from token
+      this.currentUserScope.set(res.scope); 
     },
     error: () => {
       this.isAuthenticated.set(false);
-      this.currentUserScope.set('General'); // fallback if token missing or invalid
+      this.currentUserScope.set('General'); 
     }
   });
 }

@@ -6,23 +6,16 @@ import logging
 
 app = FastAPI()
 
-# Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-# -------------------------
-# Keycloak config
-# -------------------------
+
 KEYCLOAK_URL = "http://localhost:8180"
 REALM = "authentication"
 CLIENT_ID = "public-client"
 GATEWAY_CALLBACK = "http://localhost:8081/api/auth/callback"
 FRONTEND_CALLBACK = "http://localhost:4200/login-callback"
-# Replace with actual Keycloak public key in prod
 KEYCLOAK_PUBLIC_KEY = "YOUR_KEYCLOAK_PUBLIC_KEY_HERE"
 
-# -------------------------
-# Login redirect
-# -------------------------
 @app.get("/api/auth/login")
 def login():
     keycloak_login_url = (
@@ -47,8 +40,6 @@ def logout():
     return response
 
 
-# Callback
-# -------------------------
 @app.get("/api/auth/callback")
 def callback(code: str = None):
     if not code:
@@ -83,16 +74,14 @@ def callback(code: str = None):
         key="access_token",
         value=access_token,
         httponly=True,
-        secure=False,     # True in prod
+        secure=False, 
         samesite="Lax",
         path="/"
     )
 
     return redirect_response
 
-# -------------------------
-# Get current user info
-# -------------------------
+
 @app.get("/api/auth/me")
 def me(request: Request):
     token = request.cookies.get("access_token")
@@ -104,7 +93,6 @@ def me(request: Request):
         payload = jwt.decode(token, options={"verify_signature": False})
         logger.info(f"Token payload: {payload}")
 
-        # Scope will be only "MutualFunds"
         user_scope = payload.get("scope", "General")
 
         logger.info(f"User scope: {user_scope}")
