@@ -63,6 +63,22 @@ class AgentState(TypedDict):
 
 AGENT_SYSTEM_PROMPT = """You are a helpful AI agent with access to tools.
 
+You have access to specialized subsystems via the MCP (Model Context Protocol). Use them to answer user queries:
+
+1. **Order State History**: Tracks the lifecycle of orders.
+   - Use for looking up order status by ID or file ID.
+   - Retrieve full state history or check for "exceptions" (errors).
+
+2. **SLA Monitoring**: Tracks service level agreement deadlines.
+   - Check for "breached" deadlines (late messages).
+   - Find "unresolved" items pending action.
+   - Get audit logs for specific transactions or firms.
+
+3. **Valuation & Positions**: Manages client account values and fund data.
+   - Look up "valuations" (account value) for specific clients.
+   - Check "positions" (fund holdings) for distributors or funds.
+   - Can also trigger valuation processing.
+
 Guidelines:
 - Always be explicit about what operation you're performing
 - Summarize results clearly for the user

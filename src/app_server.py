@@ -179,11 +179,20 @@ async def stream_generator(input_message: str, thread_id: str, user_context: Dic
         }
     }
 
+    announced_agents = set()
+
     try:
         async for event in graph.astream_events(input_state, config=config, version="v1"):
             kind = event["event"]
             
-            # Filter for specific events we want to send to client
+            # Inspect metadata to filter noise and identify active agent
+            metadata = event.get("metadata", {})
+            node_name = metadata.get("langgraph_node", "")
+            
+            # 1. Ignore output from the Router's classification step
+            if node_name == "classify_query":
+                continue
+
             # 'on_chat_model_stream' gives tokens. 'on_chain_end' gives full outputs.
             # You might need to adjust this depending on exactly what your frontend expects
             if kind == "on_chat_model_stream":
@@ -202,7 +211,22 @@ async def stream_generator(input_message: str, thread_id: str, user_context: Dic
                 if content:
                     yield json.dumps({"type": "message", "content": content}) + "\n"
             
-            # You can handle other events (tool calls, state updates) here
+            # 3. Detect Node Entry to signal user
+            elif kind == "on_chain_start" and node_name in ["mcp_agent", "order_agent", "nav_agent"]:
+                # Map technical node names to friendly names
+                agent_map = {
+                    "mcp_agent": "General Agent",
+                    "order_agent": "Order Agent",
+                    "nav_agent": "NAV Agent"
+                }
+                
+                if node_name not in announced_agents:
+                    announced_agents.add(node_name)
+                    friendly_name = agent_map.get(node_name, node_name)
+                    # Send a system message or special marker
+                    # We'll stick it in a 'meta' event for now, frontend might need update to render it nicely
+                    # For now, let's prepend it as a bold indicator if it's the first time
+                    yield json.dumps({"type": "message", "content": f"\n\n**Using {friendly_name}**...\n\n"}) + "\n"
             
     except Exception as e:
         logger.error(f"Streaming error: {e}")
