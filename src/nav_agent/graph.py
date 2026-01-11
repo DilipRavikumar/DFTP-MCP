@@ -21,7 +21,7 @@ import httpx
 from langchain.tools import tool
 from langchain_core.messages import BaseMessage, SystemMessage, ToolMessage
 from langchain_core.runnables import RunnableConfig
-from langgraph.graph import END, START, StateGraph, add_messages
+from langgraph.graph import END, START, StateGraph
 from langgraph.types import Command, interrupt
 from typing_extensions import Annotated, TypedDict
 
@@ -59,18 +59,22 @@ class AgentState(TypedDict):
     See: https://langchain-ai.github.io/langgraph/concepts/agentic-agents/
     """
 
-    messages: Annotated[list[BaseMessage], add_messages]
+    messages: Annotated[list[BaseMessage], "The conversation messages"]
 
 
 AGENT_SYSTEM_PROMPT = """You are a helpful NAV (Net Asset Value) management agent with access to tools.
 
+When handling file uploads:
+- Extract the file path from the user message
+- Call the upload_nav_file tool with the exact path
+- When the tool returns a response, ALWAYS prefix it with a success indicator and return it directly to the user
+- Do NOT add extra commentary or modify the tool response
+
 Guidelines:
 - Always be explicit about what operation you're performing
-- Summarize results clearly for the user
-- For write operations, wait for user confirmation before proceeding
-- Never assume user intent for destructive operations
-- Provide helpful context when operations might have side effects
-- For file uploads, confirm the file details before processing
+- When a user uploads a file, they will provide the local file path - use it exactly as provided
+- For file uploads, return the tool response exactly as provided by the API
+- Provide a clear status message to the user about what happened
 - NAV files should be in JSON format
 """
 
@@ -112,19 +116,31 @@ def upload_nav_file(file_path: str) -> str:
         files = {"file": (file_name, file_content)}
 
         api_url = _get_api_base_url()
+        logger.info(f"Uploading NAV file to {api_url}/api/nav/upload")
+        
         response = httpx.post(
             f"{api_url}/api/nav/upload",
             files=files,
             timeout=30.0,
         )
 
+        logger.info(f"Upload response status: {response.status_code}")
+        logger.info(f"Upload response body: {response.text}")
+
         if response.status_code == 200:
-            result = response.text
+            try:
+                # Try to parse as JSON and return formatted response
+                result_json = response.json()
+                result_str = json.dumps(result_json, indent=2)
+            except:
+                # Fallback to raw text if JSON parsing fails
+                result_str = response.text
+            
             logger.info(
                 f"NAV file uploaded successfully: {file_name} "
                 f"(user: {os.getenv('CURRENT_USER_ID', 'unknown')})"
             )
-            return result
+            return result_str
         else:
             error_msg = f"Upload failed with status {response.status_code}"
             logger.error(f"{error_msg}: {response.text}")
@@ -253,15 +269,21 @@ async def _get_tools(user_context: UserContext) -> list[Any]:
 
 
 def _is_write_operation(tool_name: str) -> bool:
-    """Determine if a tool call represents a write operation.
+    """Determine if a tool call represents a write operation requiring approval.
 
     Args:
         tool_name: Name of the tool being called
 
     Returns:
-        True if the operation is a write/mutating operation
+        True if the operation is a write/mutating operation requiring approval
     """
-    write_keywords = ["create", "update", "delete", "add", "remove", "post", "put", "upload"]
+    # Tools that are safe and don't require approval
+    safe_tools = ["upload_nav_file", "check_nav_service_health"]
+    if tool_name in safe_tools:
+        return False
+    
+    # Other write operations that require approval
+    write_keywords = ["create", "update", "delete", "add", "remove", "post", "put"]
     return any(keyword in tool_name.lower() for keyword in write_keywords)
 
 
@@ -315,21 +337,8 @@ async def call_model(
         # Create system message
         system_msg = SystemMessage(content=AGENT_SYSTEM_PROMPT)
 
-        # Build messages: only add system message if not already in history
-        messages = state["messages"]
-        
-        # Check if system message is already in the history
-        has_system_msg = any(isinstance(msg, SystemMessage) for msg in messages)
-        
-        if has_system_msg:
-            # System message already present, use messages as-is
-            message_history = messages
-        else:
-            # Add system message at the beginning
-            message_history = [system_msg] + messages
-
         # Invoke the model
-        response = model_with_tools.invoke(message_history)
+        response = model_with_tools.invoke([system_msg] + state["messages"])
 
         logger.info(
             f"Model response for user {user_context.get('user_id')}: "
@@ -380,6 +389,8 @@ async def handle_tool_calls(
     Returns:
         Updated state with tool results
     """
+    from langgraph.types import Interrupt
+    
     messages = state["messages"]
     last_message = messages[-1]
     user_context = config.get("configurable", {}).get("user", {})
@@ -397,92 +408,124 @@ async def handle_tool_calls(
     tool_calls = last_message.tool_calls
     results = []
 
-    try:
-        # Initialize tools
-        tools_list = await _get_tools(user_context)
-        tools_by_name = {tool.name: tool for tool in tools_list}
+    # Initialize tools
+    tools_list = await _get_tools(user_context)
+    tools_by_name = {tool.name: tool for tool in tools_list}
 
-        # Process each tool call
-        for tool_call in tool_calls:
-            tool_name = tool_call["name"]
-            tool_args = tool_call.get("args", {})
+    # Process each tool call
+    for tool_call in tool_calls:
+        tool_name = tool_call["name"]
+        tool_args = tool_call.get("args", {})
 
-            logger.info(
-                f"Processing tool call: {tool_name} for user {user_context.get('user_id')}"
+        logger.info(
+            f"Processing tool call: {tool_name} for user {user_context.get('user_id')}"
+        )
+
+        # Check if this is a write operation requiring approval
+        if _is_write_operation(tool_name):
+            # Request human approval for write operations
+            approval_response = interrupt(
+                {
+                    "action": tool_name,
+                    "args": tool_args,
+                    "description": f"🔒 Write Operation Approval Required\n\n"
+                    f"Tool: {tool_name}\n"
+                    f"Arguments: {tool_args}\n\n"
+                    f"Please review and approve this operation before proceeding.",
+                }
             )
 
-            # Check if this is a write operation requiring approval
-            if _is_write_operation(tool_name):
-                # Request human approval for write operations
-                approval_response = interrupt(
-                    {
-                        "action": tool_name,
-                        "args": tool_args,
-                        "description": f"🔒 Write Operation Approval Required\n\n"
-                        f"Tool: {tool_name}\n"
-                        f"Arguments: {tool_args}\n\n"
-                        f"Please review and approve this operation before proceeding.",
-                    }
-                )
-
-                # If the response is a Command with resume, continue
-                # Otherwise wait for human input
-                if isinstance(approval_response, Command):
-                    if approval_response.resume and approval_response.resume.get(
-                        "type"
-                    ) in ["approve", "edit"]:
-                        # Use edited args if provided
-                        if approval_response.resume.get("args"):
-                            tool_args = approval_response.resume["args"]
-                        logger.info(
-                            f"Write operation approved: {tool_name} "
-                            f"(user: {user_context.get('user_id')})"
+            # If the response is a Command with resume, continue
+            # Otherwise wait for human input
+            if isinstance(approval_response, Command):
+                if approval_response.resume and approval_response.resume.get(
+                    "type"
+                ) in ["approve", "edit"]:
+                    # Use edited args if provided
+                    if approval_response.resume.get("args"):
+                        tool_args = approval_response.resume["args"]
+                    logger.info(
+                        f"Write operation approved: {tool_name} "
+                        f"(user: {user_context.get('user_id')})"
+                    )
+                else:
+                    # Operation rejected
+                    logger.info(
+                        f"Write operation rejected: {tool_name} "
+                        f"(user: {user_context.get('user_id')})"
+                    )
+                    results.append(
+                        ToolMessage(
+                            content=f"Operation '{tool_name}' was rejected by the user.",
+                            tool_call_id=tool_call["id"],
                         )
-                    else:
-                        # Operation rejected
-                        logger.info(
-                            f"Write operation rejected: {tool_name} "
-                            f"(user: {user_context.get('user_id')})"
-                        )
-                        results.append(
-                            ToolMessage(
-                                content=f"Operation '{tool_name}' was rejected by the user.",
-                                tool_call_id=tool_call["id"],
-                            )
-                        )
-                        continue
+                    )
+                    continue
 
-            # Execute the tool
-            if tool_name in tools_by_name:
-                tool = tools_by_name[tool_name]
-                try:
-                    observation = await tool.ainvoke(tool_args)
-                    logger.info(f"Tool execution successful: {tool_name}")
-                except Exception as e:
-                    observation = f"Error executing tool: {str(e)}"
-                    logger.error(f"Tool execution failed: {tool_name} - {str(e)}")
-            else:
-                observation = f"Tool '{tool_name}' not found in available tools"
-                logger.warning(f"Tool not found: {tool_name}")
+        # Execute the tool
+        if tool_name in tools_by_name:
+            tool = tools_by_name[tool_name]
+            try:
+                observation = await tool.ainvoke(tool_args)
+                logger.info(f"Tool execution successful: {tool_name}")
+                
+                # For upload_nav_file, ensure we return the response as-is
+                if tool_name == "upload_nav_file" and isinstance(observation, str):
+                    # If the response looks like JSON, keep it clean
+                    if observation.strip().startswith("{") or observation.strip().startswith("["):
+                        observation = f"✓ File uploaded successfully!\n\n{observation}"
+                    elif not observation.startswith("Error"):
+                        observation = f"✓ {observation}"
+            except Exception as e:
+                observation = f"Error executing tool: {str(e)}"
+                logger.error(f"Tool execution failed: {tool_name} - {str(e)}")
+        else:
+            observation = f"Tool '{tool_name}' not found in available tools"
+            logger.warning(f"Tool not found: {tool_name}")
 
-            results.append(
-                ToolMessage(
-                    content=str(observation),
-                    tool_call_id=tool_call["id"],
-                )
+        results.append(
+            ToolMessage(
+                content=str(observation),
+                tool_call_id=tool_call["id"],
             )
+        )
 
-        return {"messages": results}
-    except Exception as e:
-        logger.error(f"Error in handle_tool_calls: {e}")
-        return {
-            "messages": [
-                ToolMessage(
-                    content=f"Error processing tool calls: {str(e)}",
-                    tool_call_id="error",
-                )
-            ]
-        }
+    return {"messages": results}
+
+
+async def finalize_response(
+    state: AgentState,
+    config: RunnableConfig,
+) -> dict[str, Any]:
+    """Convert tool results to final response for the user.
+
+    Takes ToolMessage results and converts them to readable AIMessages.
+
+    Args:
+        state: Current agent state with tool results
+        config: Runtime configuration
+
+    Returns:
+        Updated state with final AIMessage for user
+    """
+    from langchain_core.messages import AIMessage
+    
+    messages = state["messages"]
+    
+    # Look for ToolMessages in the results
+    tool_results = []
+    for msg in messages:
+        if isinstance(msg, ToolMessage):
+            tool_results.append(msg.content)
+    
+    if tool_results:
+        # Combine all tool results into a single response
+        combined_response = "\n\n".join(tool_results)
+        logger.info("Converting tool results to final response")
+        return {"messages": [AIMessage(content=combined_response)]}
+    
+    # If no tool results, return empty
+    return {"messages": []}
 
 
 async def initialize_checkpointer() -> Any:
@@ -544,6 +587,7 @@ async def create_agent_graph() -> StateGraph:
     # Add nodes
     graph.add_node("call_model", call_model)
     graph.add_node("handle_tool_calls", handle_tool_calls)
+    graph.add_node("finalize_response", finalize_response)
 
     # Add edges
     graph.add_edge(START, "call_model")
@@ -555,7 +599,11 @@ async def create_agent_graph() -> StateGraph:
             END: END,
         },
     )
-    graph.add_edge("handle_tool_calls", "call_model")
+    # After tool execution, finalize the response
+    graph.add_edge("handle_tool_calls", "finalize_response")
+    
+    # Final response goes to end
+    graph.add_edge("finalize_response", END)
 
     # Compile with checkpointer for persistence
     compiled_graph = graph.compile(
@@ -566,81 +614,53 @@ async def create_agent_graph() -> StateGraph:
     return compiled_graph
 
 
-# Lazy initialization for module-level graph
-_graph = None
-_graph_lock = asyncio.Lock() if asyncio.iscoroutinefunction(asyncio.Lock) else None
+# Initialize graph at module level for use by LangGraph CLI
 
+# Lazy initialization to avoid asyncio.run() conflicts
+_graph_instance = None
 
-async def _get_or_create_graph():
-    """Get or create the graph asynchronously, handling event loop context."""
-    global _graph
-    if _graph is not None:
-        return _graph
-    
+def get_graph():
+    global _graph_instance
+    if _graph_instance:
+        return _graph_instance
+        
     try:
-        _graph = await create_agent_graph()
-        logger.info("NAV agent graph initialized successfully")
-    except Exception as e:
-        logger.error(f"Failed to initialize nav agent graph: {e}")
-        # Fallback: create a minimal graph for testing
-        from langgraph.checkpoint.memory import MemorySaver
-        g = StateGraph(AgentState, config_schema=Context)
-        g.add_node("call_model", call_model)
-        g.add_edge(START, "call_model")
-        _graph = g.compile(checkpointer=MemorySaver())
-    
-    return _graph
+        current_loop = asyncio.get_running_loop()
+        logger.info("Detected running event loop, graph will be lazily initialized")
+        
+        # Re-using create_agent_graph logic synchronously where possible 
+        graph = StateGraph(AgentState, config_schema=Context)
+        graph.add_node("call_model", call_model)
+        graph.add_node("handle_tool_calls", handle_tool_calls)
+        graph.add_node("finalize_response", finalize_response)
+        graph.add_edge(START, "call_model")
+        graph.add_conditional_edges(
+            "call_model",
+            _should_continue,
+            {
+                "handle_tool_calls": "handle_tool_calls",
+                END: END,
+            },
+        )
+        graph.add_edge("handle_tool_calls", "finalize_response")
+        graph.add_edge("finalize_response", END)
+        
+        _graph_instance = graph.compile(name="nav-agent")
+        logger.info("NAV Agent graph compiled successfully")
+        return _graph_instance
+        
+    except RuntimeError:
+        # No running event loop (e.g. CLI usage), safe to run async setup
+        return asyncio.run(create_agent_graph())
 
-
-# Property-like accessor for lazy initialization
-class _GraphProxy:
-    """Lazy-loading proxy for the graph with async support."""
-    
-    async def ainvoke(self, *args, **kwargs):
-        global _graph
-        if _graph is None:
-            _graph = await _get_or_create_graph()
-        return await _graph.ainvoke(*args, **kwargs)
-    
-    def invoke(self, *args, **kwargs):
-        """Synchronous invoke - delegates to ainvoke in async context."""
-        global _graph
-        if _graph is None:
-            # Try to initialize synchronously (no running loop)
-            try:
-                asyncio.get_running_loop()
-                raise RuntimeError(
-                    "Cannot call invoke() from async context. Use ainvoke() instead."
-                )
-            except RuntimeError:
-                _graph = asyncio.run(_get_or_create_graph())
-        return _graph.invoke(*args, **kwargs)
-    
-    def __getattr__(self, name):
-        global _graph
-        if _graph is None:
-            # For attribute access, try to initialize
-            try:
-                asyncio.get_running_loop()
-                logger.warning(
-                    f"Graph not yet initialized, accessing {name} in async context. "
-                    "Use ainvoke() for async operations."
-                )
-            except RuntimeError:
-                _graph = asyncio.run(_get_or_create_graph())
-        return getattr(_graph, name) if _graph else None
-    
-    def __call__(self, *args, **kwargs):
-        global _graph
-        if _graph is None:
-            try:
-                asyncio.get_running_loop()
-                raise RuntimeError(
-                    "Cannot call graph from async context. Use ainvoke() instead."
-                )
-            except RuntimeError:
-                _graph = asyncio.run(_get_or_create_graph())
-        return _graph(*args, **kwargs)
-
-
-graph = _GraphProxy()
+# For backward compatibility with LangGraph CLI
+if __name__ == "__main__":
+    graph = asyncio.run(create_agent_graph())
+else:
+    # When imported, try to get graph if safe, otherwise rely on get_graph()
+    try:
+        asyncio.get_running_loop()
+        # Don't init yet, let router call get_graph()
+        graph = None 
+    except RuntimeError:
+        graph = asyncio.run(create_agent_graph())
