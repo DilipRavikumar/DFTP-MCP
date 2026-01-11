@@ -21,7 +21,7 @@ import httpx
 from langchain.tools import tool
 from langchain_core.messages import BaseMessage, SystemMessage, ToolMessage
 from langchain_core.runnables import RunnableConfig
-from langgraph.graph import END, START, StateGraph
+from langgraph.graph import END, START, StateGraph, add_messages
 from langgraph.types import Command, interrupt
 from typing_extensions import Annotated, TypedDict
 
@@ -59,7 +59,7 @@ class AgentState(TypedDict):
     See: https://langchain-ai.github.io/langgraph/concepts/agentic-agents/
     """
 
-    messages: Annotated[list[BaseMessage], "The conversation messages"]
+    messages: Annotated[list[BaseMessage], add_messages]
 
 
 AGENT_SYSTEM_PROMPT = """You are a helpful order management agent with access to tools.
@@ -282,8 +282,21 @@ async def call_model(
         # Create system message
         system_msg = SystemMessage(content=AGENT_SYSTEM_PROMPT)
 
+        # Build messages: only add system message if not already in history
+        messages = state["messages"]
+        
+        # Check if system message is already in the history
+        has_system_msg = any(isinstance(msg, SystemMessage) for msg in messages)
+        
+        if has_system_msg:
+            # System message already present, use messages as-is
+            message_history = messages
+        else:
+            # Add system message at the beginning
+            message_history = [system_msg] + messages
+
         # Invoke the model
-        response = model_with_tools.invoke([system_msg] + state["messages"])
+        response = model_with_tools.invoke(message_history)
 
         logger.info(
             f"Model response for user {user_context.get('user_id')}: "
@@ -520,16 +533,81 @@ async def create_agent_graph() -> StateGraph:
     return compiled_graph
 
 
-# Initialize graph at module level for use by LangGraph CLI
-except Exception as e:
-    logger.error(f"Failed to initialize order agent graph: {e}")
-    # Fallback: create a minimal graph for testing
-    from langgraph.checkpoint.memory import MemorySaver
+# Lazy initialization for module-level graph
+_graph = None
+_graph_lock = asyncio.Lock() if asyncio.iscoroutinefunction(asyncio.Lock) else None
 
-    async def _create_minimal_graph() -> StateGraph:
+
+async def _get_or_create_graph():
+    """Get or create the graph asynchronously, handling event loop context."""
+    global _graph
+    if _graph is not None:
+        return _graph
+    
+    try:
+        _graph = await create_agent_graph()
+        logger.info("Order agent graph initialized successfully")
+    except Exception as e:
+        logger.error(f"Failed to initialize order agent graph: {e}")
+        # Fallback: create a minimal graph for testing
+        from langgraph.checkpoint.memory import MemorySaver
         g = StateGraph(AgentState, config_schema=Context)
         g.add_node("call_model", call_model)
         g.add_edge(START, "call_model")
-        return g.compile(checkpointer=MemorySaver())
+        _graph = g.compile(checkpointer=MemorySaver())
+    
+    return _graph
 
-    graph = asyncio.run(_create_minimal_graph())
+
+# Property-like accessor for lazy initialization
+class _GraphProxy:
+    """Lazy-loading proxy for the graph with async support."""
+    
+    async def ainvoke(self, *args, **kwargs):
+        global _graph
+        if _graph is None:
+            _graph = await _get_or_create_graph()
+        return await _graph.ainvoke(*args, **kwargs)
+    
+    def invoke(self, *args, **kwargs):
+        """Synchronous invoke - delegates to ainvoke in async context."""
+        global _graph
+        if _graph is None:
+            # Try to initialize synchronously (no running loop)
+            try:
+                asyncio.get_running_loop()
+                raise RuntimeError(
+                    "Cannot call invoke() from async context. Use ainvoke() instead."
+                )
+            except RuntimeError:
+                _graph = asyncio.run(_get_or_create_graph())
+        return _graph.invoke(*args, **kwargs)
+    
+    def __getattr__(self, name):
+        global _graph
+        if _graph is None:
+            # For attribute access, try to initialize
+            try:
+                asyncio.get_running_loop()
+                logger.warning(
+                    f"Graph not yet initialized, accessing {name} in async context. "
+                    "Use ainvoke() for async operations."
+                )
+            except RuntimeError:
+                _graph = asyncio.run(_get_or_create_graph())
+        return getattr(_graph, name) if _graph else None
+    
+    def __call__(self, *args, **kwargs):
+        global _graph
+        if _graph is None:
+            try:
+                asyncio.get_running_loop()
+                raise RuntimeError(
+                    "Cannot call graph from async context. Use ainvoke() instead."
+                )
+            except RuntimeError:
+                _graph = asyncio.run(_get_or_create_graph())
+        return _graph(*args, **kwargs)
+
+
+graph = _GraphProxy()
