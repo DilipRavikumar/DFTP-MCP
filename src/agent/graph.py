@@ -134,6 +134,7 @@ async def _get_mcp_tools(user_context: UserContext) -> list[Any]:
 
     user_scope = user_context.get("scope", [])
     all_tools = []
+    seen_tool_names = set()  # Track tool names to avoid duplicates
 
     for server_name, server_config in servers.items():
         # Authorization: ALLOW ALL for now (User request)
@@ -156,15 +157,28 @@ async def _get_mcp_tools(user_context: UserContext) -> list[Any]:
             # Add timeout to get_tools if possible, or just await
             tools = await client.get_tools() # get_tools() gets from all configured servers in the client
             
+            # Deduplicate tools - keep first occurrence only
+            unique_tools = []
+            for tool in tools:
+                tool_name = tool.name
+                if tool_name not in seen_tool_names:
+                    seen_tool_names.add(tool_name)
+                    unique_tools.append(tool)
+                else:
+                    logger.debug(f"Skipping duplicate tool: {tool_name}")
+            
             logger.info(
-                f"Loaded {len(tools)} tools from {server_name} "
+                f"Loaded {len(unique_tools)} unique tools from {server_name} "
+                f"({len(tools) - len(unique_tools)} duplicates filtered) "
                 f"(authorized for user {user_context.get('user_id')})"
             )
-            all_tools.extend(tools)
+            all_tools.extend(unique_tools)
         except Exception as e:
             logger.error(f"Failed to load tools from {server_name}: {e}")
+            logger.warning(f"Continuing without tools from {server_name}. Other servers may still work.")
             continue
 
+    logger.info(f"Total unique tools loaded: {len(all_tools)}")
     return all_tools
 
 
@@ -214,6 +228,17 @@ async def call_model(
 
         # Initialize MCP tools based on user authorization
         mcp_tools = await _get_mcp_tools(user_context)
+
+        # Final deduplication before binding - ensure NO duplicate tool names
+        final_tools = {}
+        for tool in mcp_tools:
+            if tool.name not in final_tools:
+                final_tools[tool.name] = tool
+            else:
+                logger.warning(f"Duplicate tool detected and filtered: {tool.name}")
+        
+        mcp_tools = list(final_tools.values())
+        logger.info(f"Final tool count after deduplication: {len(mcp_tools)}")
 
         # Initialize Bedrock model with tools
         # Pass system prompt via model_kwargs for Claude 3 on Bedrock
