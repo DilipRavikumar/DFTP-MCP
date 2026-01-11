@@ -170,12 +170,32 @@ async def _get_tools(user_context: UserContext) -> list[Any]:
         return tools_list
 
     user_scope = user_context.get("scope", [])
+    # Parse scope string if it's a string (e.g. from Keycloak)
+    if isinstance(user_scope, str):
+        user_scope = user_scope.split(" ")
+        
+    user_roles = user_context.get("roles", [])
+    
+    # 1. SCOPE CHECK: Must have "mutual funds" or be admin
+    if "mutual funds" not in user_scope and "admin" not in user_roles:
+         logger.warning(f"User {user_context.get('user_id')} missing required scope 'mutual funds'")
+         return []
+
+    # 2. ROLE CHECK: Must be "distributor" or "admin"
+    allowed_roles = {"distributor", "admin"}
+    user_role_set = set(user_roles)
+    if not user_role_set.intersection(allowed_roles):
+        logger.warning(f"User {user_context.get('user_id')} missing required role (distributor/admin)")
+        return []
 
     for server_name, server_config in servers.items():
-        # Authorization: Only load tools from servers in user scope
-        if server_name not in user_scope:
-            logger.debug(f"User not authorized for server: {server_name}")
-            continue
+        # Authorization: Only load tools from servers in user scope 
+        # (This is legacy scope check for specific servers, we can keep or relax it)
+        if server_name not in user_scope and "admin" not in user_roles:
+             # Relaxing this since "mutual funds" is the main gatekeeper now
+             # logger.debug(f"User not authorized for server: {server_name}")
+             # continue
+             pass
 
         try:
             mcp_config = {
@@ -501,14 +521,6 @@ async def create_agent_graph() -> StateGraph:
 
 
 # Initialize graph at module level for use by LangGraph CLI
-async def _init_graph() -> StateGraph:
-    """Initialize the graph asynchronously."""
-    return await create_agent_graph()
-
-
-# For compatibility with langgraph CLI
-try:
-    graph = asyncio.run(_init_graph())
 except Exception as e:
     logger.error(f"Failed to initialize order agent graph: {e}")
     # Fallback: create a minimal graph for testing

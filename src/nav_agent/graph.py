@@ -203,12 +203,32 @@ async def _get_tools(user_context: UserContext) -> list[Any]:
         return tools_list
 
     user_scope = user_context.get("scope", [])
+    # Parse scope string if it's a string
+    if isinstance(user_scope, str):
+        user_scope = user_scope.split(" ")
+        
+    user_roles = user_context.get("roles", [])
+
+    # 1. SCOPE CHECK: Must have "mutual funds"
+    if "mutual funds" not in user_scope:
+         logger.warning(f"User {user_context.get('user_id')} missing required scope 'mutual funds' for NAV Agent")
+         return []
+
+    # 2. ROLE CHECK: Must be "fundhouse" (or "admin" if we want to allow admins)
+    allowed_roles = {"fundhouse"}
+    user_role_set = set(user_roles)
+    if not user_role_set.intersection(allowed_roles):
+        logger.warning(f"User {user_context.get('user_id')} missing required role 'fundhouse' for NAV Agent")
+        return []
 
     for server_name, server_config in servers.items():
-        # Authorization: Only load tools from servers in user scope
+        # Authorization: Only load tools from servers in user scope 
+        # (This is legacy scope check for specific servers, we can keep or relax it)
         if server_name not in user_scope:
-            logger.debug(f"User not authorized for server: {server_name}")
-            continue
+             # Relaxing this since "mutual funds" is the main gatekeeper now
+             # logger.debug(f"User not authorized for server: {server_name}")
+             # continue
+             pass
 
         try:
             mcp_config = {
@@ -534,23 +554,52 @@ async def create_agent_graph() -> StateGraph:
 
 
 # Initialize graph at module level for use by LangGraph CLI
-async def _init_graph() -> StateGraph:
-    """Initialize the graph asynchronously."""
-    return await create_agent_graph()
 
+# Lazy initialization to avoid asyncio.run() conflicts
+_graph_instance = None
 
-# For compatibility with langgraph CLI
-try:
-    graph = asyncio.run(_init_graph())
-except Exception as e:
-    logger.error(f"Failed to initialize NAV agent graph: {e}")
-    # Fallback: create a minimal graph for testing
-    from langgraph.checkpoint.memory import MemorySaver
+def get_graph():
+    global _graph_instance
+    if _graph_instance:
+        return _graph_instance
+        
+    try:
+        current_loop = asyncio.get_running_loop()
+        logger.info("Detected running event loop, graph will be lazily initialized")
+        
+        # Re-using create_agent_graph logic synchronously where possible 
+        graph = StateGraph(AgentState, config_schema=Context)
+        graph.add_node("call_model", call_model)
+        graph.add_node("handle_tool_calls", handle_tool_calls)
+        graph.add_edge(START, "call_model")
+        graph.add_conditional_edges(
+            "call_model",
+            _should_continue,
+            {
+                "handle_tool_calls": "handle_tool_calls",
+                END: END,
+            },
+        )
+        graph.add_edge("handle_tool_calls", "call_model")
+        
+        _graph_instance = graph.compile(name="nav-agent")
+        logger.info("NAV Agent graph compiled successfully")
+        return _graph_instance
+        
+    except RuntimeError:
+        # No running event loop (e.g. CLI usage), safe to run async setup
+        return asyncio.run(create_agent_graph())
 
-    async def _create_minimal_graph() -> StateGraph:
-        g = StateGraph(AgentState, config_schema=Context)
-        g.add_node("call_model", call_model)
-        g.add_edge(START, "call_model")
-        return g.compile(checkpointer=MemorySaver())
+# For backward compatibility with LangGraph CLI
+if __name__ == "__main__":
+    graph = asyncio.run(create_agent_graph())
+else:
+    # When imported, try to get graph if safe, otherwise rely on get_graph()
+    try:
+        asyncio.get_running_loop()
+        # Don't init yet, let router call get_graph()
+        graph = None 
+    except RuntimeError:
+        graph = asyncio.run(create_agent_graph())
 
     graph = asyncio.run(_create_minimal_graph())

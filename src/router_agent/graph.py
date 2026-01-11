@@ -214,8 +214,8 @@ async def invoke_order_agent(
         if not user_context:
              user_context = {
                 "user_id": "test_user",
-                "role": "admin",
-                "scope": ["mcp-agent", "order-agent", "nav-agent", "router-agent"]
+                "roles": ["admin"], # Updated to list
+                "scope": ["mutual funds", "mcp-agent", "order-agent", "nav-agent", "router-agent"]
             }
 
         # Load order agent

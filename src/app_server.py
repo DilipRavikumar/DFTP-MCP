@@ -152,7 +152,8 @@ def me(request: Request):
             "user_id": payload.get("sub"),
             "username": payload.get("preferred_username"),
             "scope": user_scope,
-            "roles": payload.get("realm_access", {}).get("roles", [])
+            # Extract Client Roles: resource_access.{CLIENT_ID}.roles
+            "roles": payload.get("resource_access", {}).get(CLIENT_ID, {}).get("roles", [])
         }
     except Exception as e:
         logger.error(f"Token decode error: {e}")
