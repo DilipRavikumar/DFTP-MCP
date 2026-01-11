@@ -54,10 +54,11 @@ export class ChatService {
         }
     }
 
-    uploadFile(file: File, threadId: string): Observable<any> {
+    uploadFile(file: File, threadId: string, description: string = ''): Observable<any> {
         const formData = new FormData();
         formData.append('file', file);
         formData.append('thread_id', threadId);
+        formData.append('description', description);
 
         return this.http.post(`${this.apiUrl}/upload`, formData);
     }

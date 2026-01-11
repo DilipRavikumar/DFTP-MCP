@@ -10,7 +10,7 @@ import httpx
 # Load environment variables from .env file
 from dotenv import load_dotenv
 load_dotenv()
-from fastapi import FastAPI, Response, Request, HTTPException, Depends
+from fastapi import FastAPI, Response, Request, HTTPException, Depends, File, UploadFile, Form
 from fastapi.responses import RedirectResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -246,10 +246,110 @@ async def chat(request: ChatRequest, req: Request):
     )
 
 @app.post("/api/upload")
-async def upload_file(req: Request):
-    # This might need to be implemented if you support file uploads
-    # Accessing req.form() to get file and passing to agent...
-    return {"message": "File upload pending implementation"}
+async def upload_file(
+    req: Request,
+    file: UploadFile = File(...),
+    thread_id: str = Form(...),
+    description: str = Form("")
+):
+    """Handle file uploads, save locally, and trigger agent processing."""
+    
+    # 1. Auth / User Context (Same as chat endpoint)
+    token = req.cookies.get("access_token")
+    if not token:
+         auth_header = req.headers.get("Authorization")
+         if auth_header and auth_header.startswith("Bearer "):
+            token = auth_header.split(" ")[1]
+
+    user_context = {}
+    if token:
+         try:
+            payload = jwt.decode(token, options={"verify_signature": False})
+            user_context = {
+                "user_id": payload.get("sub", "anonymous"),
+                "username": payload.get("preferred_username"),
+                "scope": payload.get("scope", "").split(" "),
+                # Extract Client Roles: resource_access.{CLIENT_ID}.roles
+                "roles": payload.get("resource_access", {}).get(CLIENT_ID, {}).get("roles", [])
+            }
+         except:
+             pass
+    
+    if not user_context:
+        # Default for dev
+        user_context = {
+             "user_id": "test_user",
+             "username": "DevUser",
+             "roles": ["admin"],
+             "scope": ["mutual funds", "mcp-agent", "order-agent", "nav-agent", "router-agent"]
+        }
+
+    # 2. Save File Locally
+    try:
+        upload_dir = Path("uploads")
+        upload_dir.mkdir(exist_ok=True)
+        
+        file_path = upload_dir / file.filename
+        # TODO: Handle unique filenames if needed
+        
+        content = await file.read()
+        with open(file_path, "wb") as f:
+            f.write(content)
+            
+        logger.info(f"File saved to: {file_path.absolute()}")
+        
+    except Exception as e:
+        logger.error(f"File save error: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to save file: {e}")
+
+    # 3. Invoke Agent with File Info
+    from langchain_core.messages import HumanMessage
+    
+    abs_path = str(file_path.absolute())
+    msg_content = (
+        f"I have uploaded a file named '{file.filename}'.\n"
+        f"Description: {description}\n"
+        f"The file is saved locally at: {abs_path}\n"
+        f"Please process this file."
+    )
+    
+    input_state = {
+        "messages": [HumanMessage(content=msg_content)]
+    }
+    
+    config = {
+        "configurable": {
+            "thread_id": thread_id,
+            "user": user_context
+        }
+    }
+    
+    try:
+        # We use ainvoke to run the graph
+        result = await graph.ainvoke(input_state, config=config)
+        
+        agent_response = "File processed."
+        if "messages" in result and result["messages"]:
+            # Get the last message (AIMessage)
+            for msg in reversed(result["messages"]):
+                if msg.type == "ai":
+                    agent_response = msg.content
+                    # Parse block format if needed (similar to stream logic)
+                    if isinstance(agent_response, list):
+                        text_content = ""
+                        for block in agent_response:
+                             if isinstance(block, dict) and block.get("type") == "text":
+                                 text_content += block.get("text", "")
+                             elif isinstance(block, str):
+                                 text_content += block
+                        agent_response = text_content
+                    break
+        
+        return {"agent_response": agent_response}
+        
+    except Exception as e:
+        logger.error(f"Agent processing error: {e}")
+        return {"agent_response": f"Error during processing: {str(e)}"}
 
 # --- Entry Point ---
 if __name__ == "__main__":
