@@ -1,0 +1,43 @@
+version: "3.8"
+
+services:
+  # PostgreSQL for state persistence
+  postgres:
+    image: postgres:15-alpine
+    container_name: mcp_agent_postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: mcp_agent
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - mcp_agent_network
+
+  # Redis for task queue (optional, used by langgraph up)
+  redis:
+    image: redis:7-alpine
+    container_name: mcp_agent_redis
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - mcp_agent_network
+
+volumes:
+  postgres_data:
+
+networks:
+  mcp_agent_network:
+    driver: bridge

@@ -1,0 +1,42 @@
+:root {
+  --sidebar-bg-from: #001F1A;
+  --sidebar-bg-to: #003E32;
+  --primary-color: #00C6A2;
+  --accent-color: #4FFFE1;
+  --input-bg: #002A24;
+  --bg-color: #FFFFFF;
+  --text-color: #172b4d;
+  --sidebar-text: #FFFFFF;
+
+  --font-family: 'Inter', system-ui, sans-serif;
+}
+
+body {
+  margin: 0;
+  font-family: var(--font-family);
+  background-color: var(--bg-color);
+  color: var(--text-color);
+  -webkit-font-smoothing: antialiased;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #dfe1e6;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #c1c7d0;
+}

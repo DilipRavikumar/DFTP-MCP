@@ -1,0 +1,13 @@
+{
+  "$schema": "https://langgra.ph/schema.json",
+  "python_version": "3.11",
+  "dependencies": ["."],
+  "graphs": {
+    "mcp-agent": "./src/agent/graph.py:graph",
+    "order-agent": "./src/order_agent/graph.py:graph",
+    "nav-agent": "./src/nav_agent/graph.py:graph",
+    "router-agent": "./src/router_agent/graph.py:graph"
+  },
+  "env": ".env",
+  "image_distro": "wolfi"
+}
