@@ -19,7 +19,7 @@ from typing import Any
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
 from langchain_core.runnables import RunnableConfig
-from langgraph.graph import END, START, StateGraph, add_messages
+from langgraph.graph import END, START, StateGraph
 from typing_extensions import Annotated, TypedDict
 
 # Configure logging
@@ -56,7 +56,7 @@ class RouterState(TypedDict):
     See: https://langchain-ai.github.io/langgraph/concepts/agentic-agents/
     """
 
-    messages: Annotated[list[BaseMessage], add_messages]
+    messages: Annotated[list[BaseMessage], "The conversation messages"]
     route_decision: Annotated[str, "Routing decision made by classifier"]
     order_result: Annotated[str, "Result from order agent"]
     nav_result: Annotated[str, "Result from NAV agent"]
@@ -98,9 +98,10 @@ async def _load_subagent(agent_name: str) -> Any:
 
             return order_graph
         elif agent_name == "nav":
-            from src.nav_agent.graph import graph as nav_graph
+            import src.nav_agent.graph as nav_module
 
-            return nav_graph
+            # Use get_graph() which handles async initialization properly
+            return nav_module.get_graph()
         elif agent_name == "mcp":
             import src.agent.graph as mcp_module
 
@@ -276,7 +277,15 @@ async def invoke_nav_agent(
         Updated state with NAV agent result
     """
     try:
+        from langchain_core.messages import ToolMessage
+        
         user_context = config.get("configurable", {}).get("user", {})
+        if not user_context:
+            user_context = {
+                "user_id": "test_user",
+                "role": "admin",
+                "scope": ["mcp-agent", "order-agent", "nav-agent", "router-agent"]
+            }
 
         # Load NAV agent
         nav_graph = await _load_subagent("nav")
@@ -297,19 +306,37 @@ async def invoke_nav_agent(
 
         # Extract final message from NAV agent result
         final_message = ""
+        
+        logger.info(f"NAV agent result keys: {result.keys() if isinstance(result, dict) else 'not a dict'}")
+        logger.info(f"NAV agent messages count: {len(result.get('messages', []))} messages")
+        
+        # Log all messages for debugging
+        if "messages" in result:
+            for i, msg in enumerate(result["messages"]):
+                logger.debug(f"Message {i}: {type(msg).__name__} - {str(msg.content)[:100]}")
+        
+        # First, try to find a ToolMessage (file upload response)
         if "messages" in result:
             for msg in reversed(result["messages"]):
-                if isinstance(msg, AIMessage):
+                if isinstance(msg, ToolMessage):
                     final_message = msg.content
+                    logger.info(f"Extracted tool response for user {user_context.get('user_id')}")
                     break
+            
+            # If no ToolMessage, fall back to last AIMessage
+            if not final_message:
+                for msg in reversed(result["messages"]):
+                    if isinstance(msg, AIMessage):
+                        final_message = msg.content
+                        break
 
         logger.info(
-            f"NAV agent completed for user {user_context.get('user_id')}: {final_message[:100]}"
+            f"NAV agent completed for user {user_context.get('user_id')}: {final_message[:100] if final_message else 'empty'}"
         )
 
         return {
             "nav_result": final_message or "NAV agent completed without response",
-            "messages": [AIMessage(content=f"NAV agent: {final_message}")],
+            "messages": [AIMessage(content=f"NAV agent: {final_message}" if final_message else "NAV agent: No response")],
         }
 
     except Exception as e:
@@ -418,24 +445,19 @@ async def synthesize_results(
                 user_message = msg
                 break
 
+        # If no user message and we have agent results (file upload scenario),
+        # return the agent result directly
+        if not user_message and results:
+            combined_result = "\n\n".join(results)
+            logger.info(
+                f"File upload processed successfully for user {user_context.get('user_id')}"
+            )
+            return {
+                "messages": [AIMessage(content=combined_result)],
+            }
+
         if not user_message:
             user_message = HumanMessage(content="No original query")
-
-        synthesis_context = "\n\n".join(results) if results else "No agent results available"
-        
-        # If we have agent results, return them directly with minimal synthesis
-        if results:
-            logger.info(
-                f"Results synthesized for user {user_context.get('user_id')}"
-            )
-            # Return the agent results directly as the response
-            combined_response = f"Based on your request: {user_message.content}\n\n{synthesis_context}"
-            return {
-                "messages": [AIMessage(content=combined_response)],
-            }
-        
-        # If no agent results, use Claude for synthesis
-        from langchain_aws.chat_models import ChatBedrock
 
         # Synthesize results
         model = ChatBedrock(
@@ -448,6 +470,7 @@ async def synthesize_results(
             max_tokens=2048,
         )
 
+        synthesis_context = "\n\n".join(results) if results else "No agent results available"
         synthesis_prompt = f"""Original user query: {user_message.content}
 
 Agent Results:
@@ -597,18 +620,21 @@ async def _init_graph() -> StateGraph:
     return await create_router_graph()
 
 
+# Fallback: create a minimal graph for testing
+async def _create_minimal_graph() -> StateGraph:
+    """Create a minimal graph when main graph initialization fails."""
+    from langgraph.checkpoint.memory import MemorySaver
+
+    g = StateGraph(RouterState, config_schema=Context)
+    g.add_node("classify_query", classify_query)
+    g.add_edge(START, "classify_query")
+    g.add_edge("classify_query", END)
+    return g.compile(checkpointer=MemorySaver())
+
+
 # For compatibility with langgraph CLI
 try:
     graph = asyncio.run(_init_graph())
 except Exception as e:
     logger.error(f"Failed to initialize router agent graph: {e}")
-    # Fallback: create a minimal graph for testing
-    from langgraph.checkpoint.memory import MemorySaver
-
-    async def _create_minimal_graph() -> StateGraph:
-        g = StateGraph(RouterState, config_schema=Context)
-        g.add_node("classify_query", classify_query)
-        g.add_edge(START, "classify_query")
-        return g.compile(checkpointer=MemorySaver())
-
     graph = asyncio.run(_create_minimal_graph())
