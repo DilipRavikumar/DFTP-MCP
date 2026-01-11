@@ -374,7 +374,7 @@ async def handle_tool_calls(
          # Fallback for dev
          user_context = {
             "user_id": "test_user",
-            "role": "admin",
+            "role": "fundhouse",
             "scope": ["mcp-agent", "order-agent", "nav-agent", "router-agent"]
         }
 
@@ -591,6 +591,25 @@ def get_graph():
         return asyncio.run(create_agent_graph())
 
 # For backward compatibility with LangGraph CLI
+async def _create_minimal_graph() -> StateGraph:
+    """Create a minimal graph for testing/CLI usage."""
+    from langgraph.checkpoint.memory import MemorySaver
+    g = StateGraph(AgentState, config_schema=Context)
+    g.add_node("call_model", call_model)
+    g.add_node("handle_tool_calls", handle_tool_calls)
+    g.add_edge(START, "call_model")
+    g.add_conditional_edges(
+        "call_model",
+        _should_continue,
+        {
+            "handle_tool_calls": "handle_tool_calls",
+            END: END,
+        },
+    )
+    g.add_edge("handle_tool_calls", "call_model")
+    return g.compile(checkpointer=MemorySaver(), name="nav-agent-minimal")
+
+
 if __name__ == "__main__":
     graph = asyncio.run(create_agent_graph())
 else:
@@ -601,5 +620,3 @@ else:
         graph = None 
     except RuntimeError:
         graph = asyncio.run(create_agent_graph())
-
-    graph = asyncio.run(_create_minimal_graph())

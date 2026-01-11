@@ -1,9 +1,9 @@
 {
   "servers": [
     {
-        "spec_link": "https://petstore3.swagger.io/api/v3/openapi.json",
-        "base_url": "https://petstore3.swagger.io/api/v3/",
-        "server_name": "Petstore MCP Server"
+        "spec_link": "http://localhost:8080/api-docs",
+        "base_url": "http://localhost:8080",
+        "server_name": "Nav Ingestion MCP Server"
     }
   ]
 }

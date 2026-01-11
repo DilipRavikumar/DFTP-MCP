@@ -521,15 +521,73 @@ async def create_agent_graph() -> StateGraph:
 
 
 # Initialize graph at module level for use by LangGraph CLI
-except Exception as e:
-    logger.error(f"Failed to initialize order agent graph: {e}")
-    # Fallback: create a minimal graph for testing
+
+# Lazy initialization to avoid asyncio.run() conflicts
+_graph_instance = None
+
+
+def get_graph():
+    """Retrieve the order agent graph, initializing if needed."""
+    global _graph_instance
+    if _graph_instance:
+        return _graph_instance
+
+    try:
+        current_loop = asyncio.get_running_loop()
+        logger.info("Detected running event loop, graph will be lazily initialized")
+
+        # Create a minimal graph when there's a running event loop
+        graph = StateGraph(AgentState, config_schema=Context)
+        graph.add_node("call_model", call_model)
+        graph.add_node("handle_tool_calls", handle_tool_calls)
+        graph.add_edge(START, "call_model")
+        graph.add_conditional_edges(
+            "call_model",
+            _should_continue,
+            {
+                "handle_tool_calls": "handle_tool_calls",
+                END: END,
+            },
+        )
+        graph.add_edge("handle_tool_calls", "call_model")
+
+        _graph_instance = graph.compile(name="order-agent")
+        logger.info("Order Agent graph compiled successfully")
+        return _graph_instance
+
+    except RuntimeError:
+        # No running event loop (e.g. CLI usage), safe to run async setup
+        return asyncio.run(create_agent_graph())
+
+
+# For backward compatibility with LangGraph CLI
+async def _create_minimal_graph() -> StateGraph:
+    """Create a minimal graph for testing/CLI usage."""
     from langgraph.checkpoint.memory import MemorySaver
 
-    async def _create_minimal_graph() -> StateGraph:
-        g = StateGraph(AgentState, config_schema=Context)
-        g.add_node("call_model", call_model)
-        g.add_edge(START, "call_model")
-        return g.compile(checkpointer=MemorySaver())
+    g = StateGraph(AgentState, config_schema=Context)
+    g.add_node("call_model", call_model)
+    g.add_node("handle_tool_calls", handle_tool_calls)
+    g.add_edge(START, "call_model")
+    g.add_conditional_edges(
+        "call_model",
+        _should_continue,
+        {
+            "handle_tool_calls": "handle_tool_calls",
+            END: END,
+        },
+    )
+    g.add_edge("handle_tool_calls", "call_model")
+    return g.compile(checkpointer=MemorySaver(), name="order-agent-minimal")
 
-    graph = asyncio.run(_create_minimal_graph())
+
+if __name__ == "__main__":
+    graph = asyncio.run(create_agent_graph())
+else:
+    # When imported, try to get graph if safe, otherwise rely on get_graph()
+    try:
+        asyncio.get_running_loop()
+        # Don't init yet, let router call get_graph()
+        graph = None
+    except RuntimeError:
+        graph = asyncio.run(create_agent_graph())

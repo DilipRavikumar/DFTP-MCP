@@ -94,13 +94,12 @@ async def _load_subagent(agent_name: str) -> Any:
     """
     try:
         if agent_name == "order":
-            from src.order_agent.graph import graph as order_graph
-
-            return order_graph
+            import src.order_agent.graph as order_module
+            return await order_module.get_graph()
         elif agent_name == "nav":
-            from src.nav_agent.graph import graph as nav_graph
-
-            return nav_graph
+            import src.nav_agent.graph as nav_module
+            # get_graph() is synchronous for nav agent
+            return nav_module.get_graph()
         elif agent_name == "mcp":
             import src.agent.graph as mcp_module
 
@@ -233,7 +232,7 @@ async def invoke_order_agent(
             }
         }
 
-        result = order_graph.invoke(order_state, config=order_config)
+        result = await order_graph.ainvoke(order_state, config=order_config)
 
         # Extract final message from order agent result
         final_message = ""
@@ -293,7 +292,7 @@ async def invoke_nav_agent(
             }
         }
 
-        result = nav_graph.invoke(nav_state, config=nav_config)
+        result = await nav_graph.ainvoke(nav_state, config=nav_config)
 
         # Extract final message from NAV agent result
         final_message = ""
