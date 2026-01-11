@@ -19,7 +19,7 @@ from typing import Any
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
 from langchain_core.runnables import RunnableConfig
-from langgraph.graph import END, START, StateGraph
+from langgraph.graph import END, START, StateGraph, add_messages
 from typing_extensions import Annotated, TypedDict
 
 # Configure logging
@@ -56,7 +56,7 @@ class RouterState(TypedDict):
     See: https://langchain-ai.github.io/langgraph/concepts/agentic-agents/
     """
 
-    messages: Annotated[list[BaseMessage], "The conversation messages"]
+    messages: Annotated[list[BaseMessage], add_messages]
     route_decision: Annotated[str, "Routing decision made by classifier"]
     order_result: Annotated[str, "Result from order agent"]
     nav_result: Annotated[str, "Result from NAV agent"]
@@ -233,7 +233,7 @@ async def invoke_order_agent(
             }
         }
 
-        result = order_graph.invoke(order_state, config=order_config)
+        result = await order_graph.ainvoke(order_state, config=order_config)
 
         # Extract final message from order agent result
         final_message = ""
@@ -293,7 +293,7 @@ async def invoke_nav_agent(
             }
         }
 
-        result = nav_graph.invoke(nav_state, config=nav_config)
+        result = await nav_graph.ainvoke(nav_state, config=nav_config)
 
         # Extract final message from NAV agent result
         final_message = ""
@@ -421,6 +421,22 @@ async def synthesize_results(
         if not user_message:
             user_message = HumanMessage(content="No original query")
 
+        synthesis_context = "\n\n".join(results) if results else "No agent results available"
+        
+        # If we have agent results, return them directly with minimal synthesis
+        if results:
+            logger.info(
+                f"Results synthesized for user {user_context.get('user_id')}"
+            )
+            # Return the agent results directly as the response
+            combined_response = f"Based on your request: {user_message.content}\n\n{synthesis_context}"
+            return {
+                "messages": [AIMessage(content=combined_response)],
+            }
+        
+        # If no agent results, use Claude for synthesis
+        from langchain_aws.chat_models import ChatBedrock
+
         # Synthesize results
         model = ChatBedrock(
             model_id=os.getenv(
@@ -432,7 +448,6 @@ async def synthesize_results(
             max_tokens=2048,
         )
 
-        synthesis_context = "\n\n".join(results) if results else "No agent results available"
         synthesis_prompt = f"""Original user query: {user_message.content}
 
 Agent Results:

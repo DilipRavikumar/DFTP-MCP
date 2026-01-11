@@ -77,13 +77,13 @@ def main():
     """Entry point for the MCP servers!"""
     try:
         # Load configuration
-        config = load_config("order_agent_servers_config.json")
+        config = load_config("server_config.json")
 
         # Run main server
         main_server = FastMCP("Main MCP Server")
         for server_config in config.get("servers"):
             main_server.mount(start_server(server_config))
-        main_server.run(host="0.0.0.0", port=8000, transport="streamable-http")
+        main_server.run(host="0.0.0.0", port=8001, transport="streamable-http")
     except FileNotFoundError as e:
         print(f"Error: {str(e)}")
     except KeyboardInterrupt as ke:
