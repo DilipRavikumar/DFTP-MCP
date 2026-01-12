@@ -3,7 +3,8 @@
     height: 100vh;
     width: 100vw;
     overflow: hidden;
-    background-color: var(--sidebar-bg-from); /* Dark background matching sidebar */
+    background-color: var(--sidebar-bg-from);
+    /* Dark background matching sidebar */
 }
 
 .sidebar {
@@ -19,7 +20,7 @@
 .sidebar-header h3 {
     margin: 0 0 2rem 0;
     font-size: 1.2rem;
-    color: var(--accent-color);
+    color: white;
     font-weight: 700;
 }
 
@@ -91,9 +92,11 @@
     flex: 1;
     display: flex;
     flex-direction: column;
-    background: #001F1A; /* Dark background */
+    background: #001F1A;
+    /* Dark background */
     position: relative;
-    color: #E0E0E0; /* Light text */
+    color: #E0E0E0;
+    /* Light text */
 }
 
 .messages-container {
@@ -131,22 +134,28 @@
     gap: 1rem;
     padding: 1rem;
     border-radius: 12px;
-    background-color: #002A24; /* Dark bubble bg */
+    background-color: #002A24;
+    /* Dark bubble bg */
     align-items: flex-start;
-    border: 1px solid #004B43; /* Dark bubble border */
+    border: 1px solid #004B43;
+    /* Dark bubble border */
     color: #E0E0E0;
 }
 
 .message-wrapper.user .message-bubble {
-    background-color: #004B43; /* Distinct user bubble */
+    background-color: #004B43;
+    /* Distinct user bubble */
     border-color: var(--primary-color);
     flex-direction: row-reverse;
     color: white;
 }
 
 .avatar {
-    font-size: 1.5rem;
-    margin-top: -0.25rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-top: 0.1rem;
+    color: var(--accent-color);
 }
 
 .content {
@@ -190,7 +199,8 @@
 .input-area {
     padding: 1.5rem 2rem;
     border-top: 1px solid #004B43;
-    background: #001814; /* Slightly darker input area */
+    background: #001814;
+    /* Slightly darker input area */
 }
 
 .input-container {
@@ -234,7 +244,7 @@ textarea::-webkit-scrollbar-thumb {
 .send-btn {
     background: none;
     border: none;
-    padding: 0.5rem;
+    padding: 0.5rem 1rem;
     cursor: pointer;
     border-radius: 4px;
     color: var(--primary-color);
@@ -255,7 +265,8 @@ textarea::-webkit-scrollbar-thumb {
     padding: 0.5rem 1rem;
     font-weight: 600;
     border-radius: 6px;
-    height: 40px; /* matching other inputs */
+    height: 40px;
+    /* matching other inputs */
 }
 
 .send-btn:hover {
@@ -289,6 +300,11 @@ textarea::-webkit-scrollbar-thumb {
     gap: 0.5rem;
     color: white;
     font-weight: 500;
+}
+
+.file-info .label {
+    margin: 0;
+    display: inline-block;
 }
 
 .file-info .icon {
