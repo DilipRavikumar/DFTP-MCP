@@ -1,8 +1,8 @@
 {
   "servers": [
     {
-        "spec_link": "http://localhost:9091/v3/api-docs",
-        "base_url": "http://localhost:9091",
+        "spec_link": "http://localhost:9095/v3/api-docs",
+        "base_url": "http://localhost:9095",
         "server_name": "Status Tracking MCP Server"
     },
      {

@@ -6,13 +6,15 @@ import jwt
 import requests
 import uvicorn
 import httpx
-
+from router_agent.graph import create_router_graph
 # Load environment variables from .env file
 from dotenv import load_dotenv
 load_dotenv()
 from fastapi import FastAPI, Response, Request, HTTPException, Depends, File, UploadFile, Form
 from fastapi.responses import RedirectResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
+from contextlib import asynccontextmanager
+from langgraph.store.postgres import PostgresStore
 from pydantic import BaseModel
 from typing import List, Optional, Dict, Any
 
@@ -22,13 +24,49 @@ from pathlib import Path
 # Add project root to path so 'src' can be imported
 sys.path.append(str(Path(__file__).parent.parent))
 
-from src.router_agent.graph import graph
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="LangGraph Unified Backend")
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    db_uri = os.getenv(
+        "POSTGRES_URI",
+        "postgresql://postgres:root@localhost:5433/mcp_agent",
+    )
+
+    store = None
+    try:
+        # ✅ PostgresStore is a *SYNC* context manager
+        store_cm = PostgresStore.from_conn_string(db_uri)
+        store = store_cm.__enter__()
+
+        # ✅ Graph MUST be created while store is alive
+        graph = await create_router_graph(store=store)
+
+        app.state.graph = graph
+        app.state.store = store
+
+        logger.warning("Router graph initialized successfully. Store=PostgresStore")
+
+        yield
+
+    except Exception as e:
+        logger.exception("Failed during application lifespan startup")
+        raise e
+
+    finally:
+        if store_cm:
+            store_cm.__exit__(None, None, None)
+            logger.info("PostgresStore connection closed")
+
+
+app = FastAPI(
+    title="LangGraph Unified Backend",
+    lifespan=lifespan
+)
+
 
 # CORS Configuration
 origins = [
@@ -161,7 +199,7 @@ def me(request: Request):
 
 # --- Chat / Agent Routes ---
 
-async def stream_generator(input_message: str, thread_id: str, user_context: Dict):
+async def stream_generator(input_message: str, thread_id: str, user_context: Dict,req: Request):
     """Runs the graph and streams events to the client"""
     
     from langchain_core.messages import HumanMessage
@@ -182,7 +220,7 @@ async def stream_generator(input_message: str, thread_id: str, user_context: Dic
     announced_agents = set()
 
     try:
-        async for event in graph.astream_events(input_state, config=config, version="v1"):
+        async for event in req.app.state.graph.astream_events(input_state, config=config, version="v1"):
             kind = event["event"]
             
             # Inspect metadata to filter noise and identify active agent
@@ -265,7 +303,7 @@ async def chat(request: ChatRequest, req: Request):
         }
 
     return StreamingResponse(
-        stream_generator(request.message, request.thread_id, user_context),
+        stream_generator(request.message, request.thread_id, user_context,req),
         media_type="application/x-ndjson"
     )
 
@@ -350,7 +388,8 @@ async def upload_file(
     
     try:
         # We use ainvoke to run the graph
-        result = await graph.ainvoke(input_state, config=config)
+        result = await req.app.state.graph.ainvoke(input_state, config=config)
+
         
         agent_response = "File processed."
         if "messages" in result and result["messages"]:

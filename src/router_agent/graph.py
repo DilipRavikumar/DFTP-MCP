@@ -11,7 +11,7 @@ This router agent classifies user queries and routes them to specialized subagen
 """
 
 from __future__ import annotations
-
+from functools import partial
 import asyncio
 import logging
 import operator
@@ -88,7 +88,7 @@ SYNTHESIZER_SYSTEM_PROMPT = """You are a response synthesizer. Your job is to co
 Analyze the results provided and synthesize them into a clear, organized response that directly answers the user's original question."""
 
 
-async def remember_user_context(
+def remember_user_context(
     state: RouterState,
     config: RunnableConfig,
     *,
@@ -653,6 +653,20 @@ def _should_continue(state: RouterState) -> str:
     else:
         return "mcp_agent"
 
+def remember_node(state, config, store):
+    return remember_user_context(state, config, store=store)
+
+def order_node(state, config, store):
+    return invoke_order_agent(state, config, store=store)
+
+def nav_node(state, config, store):
+    return invoke_nav_agent(state, config, store=store)
+
+def mcp_node(state, config, store):
+    return invoke_mcp_agent(state, config, store=store)
+
+def synthesize_node(state, config, store):
+    return synthesize_results(state, config, store=store)
 
 async def create_router_graph(store: BaseStore | None = None) -> StateGraph:
     """Create and compile the router agent graph.
@@ -684,14 +698,16 @@ async def create_router_graph(store: BaseStore | None = None) -> StateGraph:
 
     # Add nodes with store access
     graph.add_node(
-        "remember",
-        lambda state, config: remember_user_context(state, config, store=store),
-    )
+    "remember",
+    lambda state, config: remember_user_context(state, config, store=store),
+)
+
     graph.add_node("classify_query", classify_query)
     graph.add_node(
-        "order_agent",
-        lambda state, config: invoke_order_agent(state, config, store=store),
-    )
+    "order_agent",
+    partial(invoke_order_agent, store=store),
+)
+
     graph.add_node(
         "nav_agent", lambda state, config: invoke_nav_agent(state, config, store=store)
     )
@@ -700,7 +716,7 @@ async def create_router_graph(store: BaseStore | None = None) -> StateGraph:
     )
     graph.add_node(
         "synthesize",
-        lambda state, config: synthesize_results(state, config, store=store),
+        partial(synthesize_results, store=store),
     )
 
     # Add edges
@@ -738,25 +754,6 @@ async def create_router_graph(store: BaseStore | None = None) -> StateGraph:
 
 
 # Initialize graph at module level for use by LangGraph CLI
-async def _init_graph() -> StateGraph:
-    """Initialize the graph with PostgreSQL store if available, else in-memory."""
-    store = None
-    try:
-        from langgraph.store.postgres import PostgresStore
-
-        db_uri = os.getenv(
-            "POSTGRES_URI",
-            "postgresql://postgres:root@localhost:5433/dftp_agent",
-        )
-        store = PostgresStore.from_conn_string(db_uri)
-        store.setup()
-        logger.info("PostgreSQL store initialized for persistence")
-    except Exception as e:
-        logger.warning(f"PostgreSQL store not available: {e}. Using in-memory store.")
-        store = None
-
-    return await create_router_graph(store=store)
-
 
 # Fallback: create a minimal graph for testing
 async def _create_minimal_graph() -> StateGraph:
@@ -767,7 +764,7 @@ async def _create_minimal_graph() -> StateGraph:
     g = StateGraph(RouterState, config_schema=Context)
     g.add_node(
         "remember",
-        lambda state, config: remember_user_context(state, config, store=store),
+        lambda state, config: remember_node(state, config, store=store),
     )
     g.add_node("classify_query", classify_query)
     g.add_edge(START, "remember")
@@ -777,8 +774,6 @@ async def _create_minimal_graph() -> StateGraph:
 
 
 # For compatibility with langgraph CLI
-try:
-    graph = asyncio.run(_init_graph())
-except Exception as e:
-    logger.error(f"Failed to initialize router agent graph: {e}")
-    graph = asyncio.run(_create_minimal_graph())
+# Graph will be initialized by the application (FastAPI lifespan)
+graph = None
+
