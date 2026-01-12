@@ -11,7 +11,11 @@ import { marked } from 'marked';
   imports: [CommonModule, FormsModule],
   template: `
     <div class="chat-layout">
-      <aside class="sidebar">
+      <!-- Mobile Backdrop -->
+      <div *ngIf="isSidebarOpen()" class="mobile-backdrop" (click)="closeSidebar()"></div>
+
+      <aside class="sidebar" [class.open]="isSidebarOpen()">
+        <button class="close-sidebar-btn" (click)="closeSidebar()">✕</button>
         <div class="sidebar-header">
           <h3>Orchestrator</h3>
         </div>
@@ -38,6 +42,15 @@ import { marked } from 'marked';
       </aside>
 
       <main class="chat-main">
+        <!-- Mobile Header -->
+        <div class="mobile-header">
+          <button class="menu-btn" (click)="toggleSidebar()">
+            <svg xmlns="http://www.w3.org/2000/svg" height="24" viewBox="0 -960 960 960" width="24" fill="currentColor">
+              <path d="M120-240v-80h720v80H120Zm0-200v-80h720v80H120Zm0-200v-80h720v80H120Z"/>
+            </svg>
+          </button>
+          <span>Chat</span>
+        </div>
         <div class="messages-container" #scrollContainer>
           <div *ngIf="messages().length === 0" class="empty-state">
             <!-- Professional Empty State -->
@@ -141,8 +154,18 @@ export class ChatComponent {
   selectedFile = signal<File | null>(null);
   fileDescription = '';
 
+  isSidebarOpen = signal(false);
+
   threadId = signal<string>(crypto.randomUUID());
   scope = this.authService.currentUserScope;
+
+  toggleSidebar() {
+    this.isSidebarOpen.update(v => !v);
+  }
+
+  closeSidebar() {
+    this.isSidebarOpen.set(false);
+  }
 
   ngOnInit() {
     this.authService.fetchUser();

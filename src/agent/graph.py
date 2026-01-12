@@ -37,6 +37,7 @@ class UserContext(TypedDict, total=False):
 
     user_id: str
     role: str
+    roles: list[str]
     scope: list[str]
 
 
@@ -221,7 +222,7 @@ async def call_model(
             logger.warning("No user context found. Using default 'test_user' for development.")
             user_context = {
                 "user_id": "test_user",
-                "role": "admin",
+                "roles": ["admin"],
                 "scope": ["mcp-agent", "order-agent", "nav-agent", "router-agent"]
             }
             # raise ValueError("User context is required in config")
@@ -323,7 +324,7 @@ async def handle_tool_calls(
          # Fallback for dev
          user_context = {
             "user_id": "test_user",
-            "role": "admin",
+            "roles": ["admin"],
             "scope": ["mcp-agent", "order-agent", "nav-agent", "router-agent"]
         }
 

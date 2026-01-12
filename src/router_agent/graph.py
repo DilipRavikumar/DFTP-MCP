@@ -35,6 +35,7 @@ class UserContext(TypedDict, total=False):
 
     user_id: str
     role: str
+    roles: list[str]
     scope: list[str]
 
 
@@ -144,7 +145,7 @@ async def classify_query(
             logger.warning("No user context found. Using default 'test_user' for development.")
             user_context = {
                 "user_id": "test_user",
-                "role": "admin",
+                "roles": ["admin"],
                 "scope": ["mcp-agent", "order-agent", "nav-agent", "router-agent"]
             }
             # raise ValueError("User context is required in config")
@@ -292,7 +293,7 @@ async def invoke_nav_agent(
         if not user_context:
             user_context = {
                 "user_id": "test_user",
-                "role": "admin",
+                "roles": ["admin"],
                 "scope": ["mcp-agent", "order-agent", "nav-agent", "router-agent"]
             }
 
@@ -374,7 +375,7 @@ async def invoke_mcp_agent(
         if not user_context:
             user_context = {
                 "user_id": "test_user",
-                "role": "admin",
+                "roles": ["admin"],
                 "scope": ["mcp-agent", "order-agent", "nav-agent", "router-agent"]
             }
         
@@ -436,7 +437,7 @@ async def synthesize_results(
         if not user_context:
              user_context = {
                 "user_id": "test_user",
-                "role": "admin",
+                "roles": ["admin"],
                 "scope": ["mcp-agent", "order-agent", "nav-agent", "router-agent"]
             }
 

@@ -72,10 +72,14 @@ def login():
     )
     return RedirectResponse(keycloak_login_url)
 
+from urllib.parse import quote
+
 @app.get("/api/auth/logout")
 def logout():
     """Logs user out of Keycloak and clears cookies"""
-    post_logout_redirect = f"{FRONTEND_URL}"
+    # URL encode the redirect URI to ensure special characters are handled correctly
+    post_logout_redirect = quote(FRONTEND_URL)
+    
     logout_url = (
         f"{KEYCLOAK_URL}/realms/{REALM}/protocol/openid-connect/logout"
         f"?client_id={CLIENT_ID}"
@@ -233,35 +237,71 @@ async def stream_generator(input_message: str, thread_id: str, user_context: Dic
         yield json.dumps({"type": "error", "content": str(e)}) + "\n"
 
 
-@app.post("/api/chat")
-async def chat(request: ChatRequest, req: Request):
-    """Chat endpoint - invokes LangGraph agent"""
+# --- Helper Functions ---
+
+def normalize_user_context(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Normalizes role and scope from JWT payload into lists."""
     
-    # Extract user context from token
+    # Normalize Scope
+    scope = payload.get("scope", [])
+    if isinstance(scope, str):
+        scope = scope.split(" ")
+        
+    # Normalize Roles
+    roles = payload.get("roles", [])
+    # Handle Keycloak's nested roles if present (resource_access)
+    client_roles = payload.get("resource_access", {}).get(CLIENT_ID, {}).get("roles", [])
+    if client_roles:
+        roles.extend(client_roles)
+        
+    # Handle single 'role' field
+    single_role = payload.get("role")
+    if single_role:
+        roles.append(single_role)
+        
+    # Deduplicate
+    roles = list(set(roles))
+
+    return {
+        "user_id": payload.get("sub", "anonymous"),
+        "roles": roles,
+        "scope": scope,
+        "username": payload.get("preferred_username")
+    }
+
+def extract_user_context_from_request(req: Request) -> Optional[Dict[str, Any]]:
+    """Extracts and normalizes user context from request cookies or headers."""
     token = req.cookies.get("access_token")
     if not token:
          auth_header = req.headers.get("Authorization")
          if auth_header and auth_header.startswith("Bearer "):
             token = auth_header.split(" ")[1]
+            
+    if not token:
+        return None
+        
+    try:
+        # Decode without verification for internal use
+        # In production, you would verify the signature here
+        payload = jwt.decode(token, options={"verify_signature": False})
+        return normalize_user_context(payload)
+    except Exception as e:
+        logger.error(f"Error extracting user context: {e}")
+        return None
 
-    user_context = {}
-    if token:
-         try:
-            payload = jwt.decode(token, options={"verify_signature": False})
-            user_context = {
-                "user_id": payload.get("sub", "anonymous"),
-                "role": "user", # Extract role properly if needed
-                "scope": payload.get("scope", "").split(" ")
-            }
-         except:
-             pass
+@app.post("/api/chat")
+async def chat(request: ChatRequest, req: Request):
+    """Chat endpoint - invokes LangGraph agent"""
+    
+    user_context = extract_user_context_from_request(req)
     
     # Default for dev if auth fails or not enabled
     if not user_context:
+        logger.warning("No valid auth found, using DEV context")
         user_context = {
              "user_id": "test_user",
-             "role": "admin",
-             "scope": ["mcp-agent", "order-agent", "nav-agent", "router-agent"]
+             "roles": ["admin"],
+             "scope": ["mcp-agent", "order-agent", "nav-agent", "router-agent", "mutual funds"]
         }
 
     return StreamingResponse(
@@ -278,26 +318,8 @@ async def upload_file(
 ):
     """Handle file uploads, save locally, and trigger agent processing."""
     
-    # 1. Auth / User Context (Same as chat endpoint)
-    token = req.cookies.get("access_token")
-    if not token:
-         auth_header = req.headers.get("Authorization")
-         if auth_header and auth_header.startswith("Bearer "):
-            token = auth_header.split(" ")[1]
-
-    user_context = {}
-    if token:
-         try:
-            payload = jwt.decode(token, options={"verify_signature": False})
-            user_context = {
-                "user_id": payload.get("sub", "anonymous"),
-                "username": payload.get("preferred_username"),
-                "scope": payload.get("scope", "").split(" "),
-                # Extract Client Roles: resource_access.{CLIENT_ID}.roles
-                "roles": payload.get("resource_access", {}).get(CLIENT_ID, {}).get("roles", [])
-            }
-         except:
-             pass
+    # 1. Auth / User Context
+    user_context = extract_user_context_from_request(req)
     
     if not user_context:
         # Default for dev
