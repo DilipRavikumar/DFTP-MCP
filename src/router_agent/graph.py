@@ -1,4 +1,4 @@
-"""Production-ready LangGraph router agent for multi-agent coordination.
+"""LangGraph router agent for multi-agent coordination.
 
 This router agent classifies user queries and routes them to specialized subagents
 (Order Agent, NAV Agent), featuring:
@@ -14,12 +14,16 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import operator
 import os
+import uuid
 from typing import Any
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
 from langchain_core.runnables import RunnableConfig
 from langgraph.graph import END, START, StateGraph
+from langgraph.store.base import BaseStore
+from langgraph.store.postgres import PostgresStore
 from typing_extensions import Annotated, TypedDict
 
 # Configure logging
@@ -28,10 +32,7 @@ logger.setLevel(os.getenv("AGENT_LOG_LEVEL", "INFO"))
 
 
 class UserContext(TypedDict, total=False):
-    """User context for authorization.
-
-    See: https://langchain-ai.github.io/langgraph/cloud/how-tos/auth/
-    """
+    """User context for authorization."""
 
     user_id: str
     role: str
@@ -42,7 +43,6 @@ class Context(TypedDict):
     """Context parameters for the router agent.
 
     Set these when creating assistants OR when invoking the graph.
-    See: https://langchain-ai.github.io/langgraph/cloud/how-tos/configuration_cloud/
     """
 
     thread_id: str
@@ -53,10 +53,9 @@ class RouterState(TypedDict):
     """State schema for the router agent.
 
     Follows the MessagesState pattern for chat-based agents.
-    See: https://langchain-ai.github.io/langgraph/concepts/agentic-agents/
     """
 
-    messages: Annotated[list[BaseMessage], "The conversation messages"]
+    messages: Annotated[list[BaseMessage], operator.add]
     route_decision: Annotated[str, "Routing decision made by classifier"]
     order_result: Annotated[str, "Result from order agent"]
     nav_result: Annotated[str, "Result from NAV agent"]
@@ -87,6 +86,81 @@ REASON: <brief explanation>
 SYNTHESIZER_SYSTEM_PROMPT = """You are a response synthesizer. Your job is to combine results from multiple agents into a coherent, helpful response.
 
 Analyze the results provided and synthesize them into a clear, organized response that directly answers the user's original question."""
+
+
+async def remember_user_context(
+    state: RouterState,
+    config: RunnableConfig,
+    *,
+    store: BaseStore,
+) -> dict[str, Any]:
+    """Store user context in persistent memory for session continuity.
+
+    Args:
+        state: Current router state
+        config: Runtime configuration with user context
+        store: PostgreSQL store for persistence
+
+    Returns:
+        Empty dict (no state changes)
+    """
+    try:
+        user_context = config.get("configurable", {}).get("user", {})
+        if not user_context or not user_context.get("user_id"):
+            return {}
+
+        user_id = user_context.get("user_id")
+        ns = ("user", user_id, "context")
+
+        # Store user metadata (role, scope) for later use
+        user_data = {
+            "role": user_context.get("role", "user"),
+            "scope": user_context.get("scope", []),
+            "timestamp": str(__import__("datetime").datetime.now()),
+        }
+
+        store.put(ns, "metadata", user_data)
+        logger.debug(f"Stored context for user {user_id}")
+
+    except Exception as e:
+        logger.error(f"Error storing user context: {e}")
+
+    return {}
+
+
+def _save_agent_interaction(
+    store: BaseStore,
+    config: RunnableConfig,
+    agent_name: str,
+    result: str,
+) -> None:
+    """Save agent interaction to persistent memory.
+
+    Args:
+        store: PostgreSQL store
+        config: Runtime configuration with user context
+        agent_name: Name of the agent (order, nav, mcp)
+        result: Result/output from the agent
+    """
+    try:
+        user_context = config.get("configurable", {}).get("user", {})
+        if not user_context or not user_context.get("user_id"):
+            return
+
+        user_id = user_context.get("user_id")
+        ns = ("user", user_id, "interactions")
+
+        interaction_data = {
+            "agent": agent_name,
+            "result": result[:500] if len(result) > 500 else result,
+            "timestamp": str(__import__("datetime").datetime.now()),
+        }
+
+        store.put(ns, str(uuid.uuid4()), interaction_data)
+        logger.debug(f"Saved {agent_name} interaction for user {user_id}")
+
+    except Exception as e:
+        logger.error(f"Error saving agent interaction: {e}")
 
 
 async def _load_subagent(agent_name: str) -> Any:
@@ -141,11 +215,13 @@ async def classify_query(
 
         user_context = config.get("configurable", {}).get("user", {})
         if not user_context:
-            logger.warning("No user context found. Using default 'test_user' for development.")
+            logger.warning(
+                "No user context found. Using default 'test_user' for development."
+            )
             user_context = {
                 "user_id": "test_user",
                 "role": "admin",
-                "scope": ["mcp-agent", "order-agent", "nav-agent", "router-agent"]
+                "scope": ["mcp-agent", "order-agent", "nav-agent", "router-agent"],
             }
             # raise ValueError("User context is required in config")
 
@@ -207,6 +283,8 @@ async def classify_query(
 async def invoke_order_agent(
     state: RouterState,
     config: RunnableConfig,
+    *,
+    store: BaseStore,
 ) -> dict[str, Any]:
     """Invoke the order agent as a subgraph.
 
@@ -215,6 +293,7 @@ async def invoke_order_agent(
     Args:
         state: Current router state
         config: Runtime configuration
+        store: PostgreSQL store for persistence
 
     Returns:
         Updated state with order agent result
@@ -222,10 +301,16 @@ async def invoke_order_agent(
     try:
         user_context = config.get("configurable", {}).get("user", {})
         if not user_context:
-             user_context = {
+            user_context = {
                 "user_id": "test_user",
-                "roles": ["admin"], # Updated to list
-                "scope": ["mutual funds", "mcp-agent", "order-agent", "nav-agent", "router-agent"]
+                "role": "admin",
+                "scope": [
+                    "mutual funds",
+                    "mcp-agent",
+                    "order-agent",
+                    "nav-agent",
+                    "router-agent",
+                ],
             }
 
         # Load order agent
@@ -253,6 +338,9 @@ async def invoke_order_agent(
                     final_message = msg.content
                     break
 
+        # Save interaction to persistent memory
+        _save_agent_interaction(store, config, "order", final_message)
+
         logger.info(
             f"Order agent completed for user {user_context.get('user_id')}: {final_message[:100]}"
         )
@@ -273,6 +361,8 @@ async def invoke_order_agent(
 async def invoke_nav_agent(
     state: RouterState,
     config: RunnableConfig,
+    *,
+    store: BaseStore,
 ) -> dict[str, Any]:
     """Invoke the NAV agent as a subgraph.
 
@@ -281,19 +371,20 @@ async def invoke_nav_agent(
     Args:
         state: Current router state
         config: Runtime configuration
+        store: PostgreSQL store for persistence
 
     Returns:
         Updated state with NAV agent result
     """
     try:
         from langchain_core.messages import ToolMessage
-        
+
         user_context = config.get("configurable", {}).get("user", {})
         if not user_context:
             user_context = {
                 "user_id": "test_user",
                 "role": "admin",
-                "scope": ["mcp-agent", "order-agent", "nav-agent", "router-agent"]
+                "scope": ["mcp-agent", "order-agent", "nav-agent", "router-agent"],
             }
 
         # Load NAV agent
@@ -315,23 +406,31 @@ async def invoke_nav_agent(
 
         # Extract final message from NAV agent result
         final_message = ""
-        
-        logger.info(f"NAV agent result keys: {result.keys() if isinstance(result, dict) else 'not a dict'}")
-        logger.info(f"NAV agent messages count: {len(result.get('messages', []))} messages")
-        
+
+        logger.info(
+            f"NAV agent result keys: {result.keys() if isinstance(result, dict) else 'not a dict'}"
+        )
+        logger.info(
+            f"NAV agent messages count: {len(result.get('messages', []))} messages"
+        )
+
         # Log all messages for debugging
         if "messages" in result:
             for i, msg in enumerate(result["messages"]):
-                logger.debug(f"Message {i}: {type(msg).__name__} - {str(msg.content)[:100]}")
-        
+                logger.debug(
+                    f"Message {i}: {type(msg).__name__} - {str(msg.content)[:100]}"
+                )
+
         # First, try to find a ToolMessage (file upload response)
         if "messages" in result:
             for msg in reversed(result["messages"]):
                 if isinstance(msg, ToolMessage):
                     final_message = msg.content
-                    logger.info(f"Extracted tool response for user {user_context.get('user_id')}")
+                    logger.info(
+                        f"Extracted tool response for user {user_context.get('user_id')}"
+                    )
                     break
-            
+
             # If no ToolMessage, fall back to last AIMessage
             if not final_message:
                 for msg in reversed(result["messages"]):
@@ -339,13 +438,24 @@ async def invoke_nav_agent(
                         final_message = msg.content
                         break
 
+        # Save interaction to persistent memory
+        _save_agent_interaction(store, config, "nav", final_message)
+
         logger.info(
             f"NAV agent completed for user {user_context.get('user_id')}: {final_message[:100] if final_message else 'empty'}"
         )
 
         return {
             "nav_result": final_message or "NAV agent completed without response",
-            "messages": [AIMessage(content=f"NAV agent: {final_message}" if final_message else "NAV agent: No response")],
+            "messages": [
+                AIMessage(
+                    content=(
+                        f"NAV agent: {final_message}"
+                        if final_message
+                        else "NAV agent: No response"
+                    )
+                )
+            ],
         }
 
     except Exception as e:
@@ -359,13 +469,16 @@ async def invoke_nav_agent(
 async def invoke_mcp_agent(
     state: RouterState,
     config: RunnableConfig,
+    *,
+    store: BaseStore,
 ) -> dict[str, Any]:
     """Invoke the MCP agent for general queries.
-    
+
     Args:
         state: Current router state
         config: Runtime configuration
-        
+        store: PostgreSQL store for persistence
+
     Returns:
         Updated state with MCP agent response
     """
@@ -375,16 +488,16 @@ async def invoke_mcp_agent(
             user_context = {
                 "user_id": "test_user",
                 "role": "admin",
-                "scope": ["mcp-agent", "order-agent", "nav-agent", "router-agent"]
+                "scope": ["mcp-agent", "order-agent", "nav-agent", "router-agent"],
             }
-        
+
         # Load MCP agent
         mcp_graph = await _load_subagent("mcp")
-        
+
         # Transform state
         messages = state["messages"]
         mcp_state = {"messages": messages}
-        
+
         # Invoke MCP agent
         mcp_config = {
             "configurable": {
@@ -392,9 +505,9 @@ async def invoke_mcp_agent(
                 "user": user_context,
             }
         }
-        
+
         result = await mcp_graph.ainvoke(mcp_state, config=mcp_config)
-        
+
         # Extract final message
         final_message = ""
         if "messages" in result:
@@ -402,29 +515,37 @@ async def invoke_mcp_agent(
                 if isinstance(msg, AIMessage):
                     final_message = msg.content
                     break
-        
+
+        # Save interaction to persistent memory
+        _save_agent_interaction(store, config, "mcp", final_message)
+
         logger.info(f"MCP agent completed for user {user_context.get('user_id')}")
-        
+
         return {
             "messages": [AIMessage(content=final_message or "MCP agent completed")],
         }
-        
+
     except Exception as e:
         logger.error(f"Error invoking MCP agent: {e}")
         return {
-            "messages": [AIMessage(content=f"Hello! I'm here to help. Error: {str(e)}")],
+            "messages": [
+                AIMessage(content=f"Hello! I'm here to help. Error: {str(e)}")
+            ],
         }
 
 
 async def synthesize_results(
     state: RouterState,
     config: RunnableConfig,
+    *,
+    store: BaseStore,
 ) -> dict[str, Any]:
     """Synthesize results from subagents into final response.
 
     Args:
         state: Current router state with all agent results
         config: Runtime configuration
+        store: PostgreSQL store for persistence
 
     Returns:
         Updated state with synthesized response
@@ -434,10 +555,10 @@ async def synthesize_results(
 
         user_context = config.get("configurable", {}).get("user", {})
         if not user_context:
-             user_context = {
+            user_context = {
                 "user_id": "test_user",
                 "role": "admin",
-                "scope": ["mcp-agent", "order-agent", "nav-agent", "router-agent"]
+                "scope": ["mcp-agent", "order-agent", "nav-agent", "router-agent"],
             }
 
         # Collect results
@@ -458,6 +579,10 @@ async def synthesize_results(
         # return the agent result directly
         if not user_message and results:
             combined_result = "\n\n".join(results)
+
+            # Save synthesis to persistent memory
+            _save_agent_interaction(store, config, "synthesis", combined_result)
+
             logger.info(
                 f"File upload processed successfully for user {user_context.get('user_id')}"
             )
@@ -479,7 +604,9 @@ async def synthesize_results(
             max_tokens=2048,
         )
 
-        synthesis_context = "\n\n".join(results) if results else "No agent results available"
+        synthesis_context = (
+            "\n\n".join(results) if results else "No agent results available"
+        )
         synthesis_prompt = f"""Original user query: {user_message.content}
 
 Agent Results:
@@ -490,9 +617,10 @@ Please synthesize these results into a clear, helpful response."""
         system_msg = SystemMessage(content=SYNTHESIZER_SYSTEM_PROMPT)
         response = model.invoke([system_msg, HumanMessage(content=synthesis_prompt)])
 
-        logger.info(
-            f"Results synthesized for user {user_context.get('user_id')}"
-        )
+        # Save synthesis to persistent memory
+        _save_agent_interaction(store, config, "synthesis", response.content)
+
+        logger.info(f"Results synthesized for user {user_context.get('user_id')}")
 
         return {
             "messages": [AIMessage(content=response.content)],
@@ -522,76 +650,62 @@ def _should_continue(state: RouterState) -> str:
         return "order_agent"
     elif route_decision == "nav":
         return "nav_agent"
-    elif route_decision == "multiple":
-        return "multiple_agents"
     else:
         return "mcp_agent"
 
 
-
-async def initialize_checkpointer() -> Any:
-    """Initialize PostgreSQL checkpointer for state persistence.
-
-    Returns:
-        Configured AsyncPostgresSaver instance, or MemorySaver as fallback
-    """
-    try:
-        from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
-    except ImportError as e:
-        logger.warning(
-            f"PostgreSQL checkpointer not available: {e}. Using memory checkpointer."
-        )
-        from langgraph.checkpoint.memory import MemorySaver
-
-        return MemorySaver()
-
-    db_uri = os.getenv(
-        "POSTGRES_URI",
-        "postgresql://postgres:postgres@localhost:5432/router_agent",
-    )
-
-    try:
-        checkpointer = AsyncPostgresSaver.from_conn_string(db_uri)
-        await checkpointer.setup()
-        logger.info("PostgreSQL checkpointer initialized successfully")
-        return checkpointer
-    except Exception as e:
-        logger.warning(
-            f"Failed to initialize PostgreSQL checkpointer: {e}. Using memory checkpointer."
-        )
-        from langgraph.checkpoint.memory import MemorySaver
-
-        return MemorySaver()
-
-
-async def create_router_graph() -> StateGraph:
+async def create_router_graph(store: BaseStore | None = None) -> StateGraph:
     """Create and compile the router agent graph.
 
     The graph follows this flow:
-    1. START → classify_query (Determine routing)
+    1. START → remember → classify_query (Store user context & determine routing)
     2. classify_query → conditional routing (Route to appropriate agent(s))
     3. Single agent: invoke agent → synthesize
     4. Multiple agents: invoke all agents in parallel → synthesize
     5. synthesize → END
 
+    Args:
+        store: PostgreSQL store for persistent memory. If None, creates in-memory store.
+
     Returns:
-        Compiled LangGraph StateGraph with PostgreSQL persistence
+        Compiled LangGraph StateGraph with persistence
     """
-    # Initialize checkpointer
-    # checkpointer = await initialize_checkpointer()
+    # Initialize store if not provided
+    if store is None:
+        from langgraph.store.memory import InMemoryStore
+
+        store = InMemoryStore()
+        logger.info("Using in-memory store (no persistent storage)")
+    else:
+        logger.info("Using PostgreSQL store for persistence")
 
     # Create state graph
     graph = StateGraph(RouterState, config_schema=Context)
 
-    # Add nodes
+    # Add nodes with store access
+    graph.add_node(
+        "remember",
+        lambda state, config: remember_user_context(state, config, store=store),
+    )
     graph.add_node("classify_query", classify_query)
-    graph.add_node("order_agent", invoke_order_agent)
-    graph.add_node("nav_agent", invoke_nav_agent)
-    graph.add_node("mcp_agent", invoke_mcp_agent)
-    graph.add_node("synthesize", synthesize_results)
+    graph.add_node(
+        "order_agent",
+        lambda state, config: invoke_order_agent(state, config, store=store),
+    )
+    graph.add_node(
+        "nav_agent", lambda state, config: invoke_nav_agent(state, config, store=store)
+    )
+    graph.add_node(
+        "mcp_agent", lambda state, config: invoke_mcp_agent(state, config, store=store)
+    )
+    graph.add_node(
+        "synthesize",
+        lambda state, config: synthesize_results(state, config, store=store),
+    )
 
     # Add edges
-    graph.add_edge(START, "classify_query")
+    graph.add_edge(START, "remember")
+    graph.add_edge("remember", "classify_query")
 
     # Conditional routing based on classification
     graph.add_conditional_edges(
@@ -600,8 +714,7 @@ async def create_router_graph() -> StateGraph:
         {
             "order_agent": "order_agent",
             "nav_agent": "nav_agent",
-            "mcp_agent": "mcp_agent",
-            "multiple_agents": "order_agent",  # Start with first agent if multiple
+            "mcp_agent": "mcp_agent", # Start with first agent if multiple
             "synthesize": "synthesize",
         },
     )
@@ -614,31 +727,53 @@ async def create_router_graph() -> StateGraph:
     graph.add_edge("synthesize", END)
     graph.add_edge("mcp_agent", END)
 
-    # Compile with checkpointer for persistence
+    # Compile with store for persistence
     compiled_graph = graph.compile(
         name="router-agent",
+        store=store,
     )
 
-    logger.info("Router agent graph compiled successfully")
+    logger.info("Router agent graph compiled successfully with persistence")
     return compiled_graph
 
 
 # Initialize graph at module level for use by LangGraph CLI
 async def _init_graph() -> StateGraph:
-    """Initialize the graph asynchronously."""
-    return await create_router_graph()
+    """Initialize the graph with PostgreSQL store if available, else in-memory."""
+    store = None
+    try:
+        from langgraph.store.postgres import PostgresStore
+
+        db_uri = os.getenv(
+            "POSTGRES_URI",
+            "postgresql://postgres:root@localhost:5433/dftp_agent",
+        )
+        store = PostgresStore.from_conn_string(db_uri)
+        store.setup()
+        logger.info("PostgreSQL store initialized for persistence")
+    except Exception as e:
+        logger.warning(f"PostgreSQL store not available: {e}. Using in-memory store.")
+        store = None
+
+    return await create_router_graph(store=store)
 
 
 # Fallback: create a minimal graph for testing
 async def _create_minimal_graph() -> StateGraph:
     """Create a minimal graph when main graph initialization fails."""
-    from langgraph.checkpoint.memory import MemorySaver
+    from langgraph.store.memory import InMemoryStore
 
+    store = InMemoryStore()
     g = StateGraph(RouterState, config_schema=Context)
+    g.add_node(
+        "remember",
+        lambda state, config: remember_user_context(state, config, store=store),
+    )
     g.add_node("classify_query", classify_query)
-    g.add_edge(START, "classify_query")
+    g.add_edge(START, "remember")
+    g.add_edge("remember", "classify_query")
     g.add_edge("classify_query", END)
-    return g.compile(checkpointer=MemorySaver())
+    return g.compile(store=store)
 
 
 # For compatibility with langgraph CLI

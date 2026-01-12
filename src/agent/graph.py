@@ -6,7 +6,6 @@ featuring:
 - Multi-server MCP support
 - User authorization based on scope and role
 - Human-in-the-loop approval for write operations
-- State persistence using PostgreSQL
 - Comprehensive error handling and logging
 """
 
@@ -32,7 +31,7 @@ logger.setLevel(os.getenv("AGENT_LOG_LEVEL", "INFO"))
 class UserContext(TypedDict, total=False):
     """User context for authorization.
 
-    See: https://langchain-ai.github.io/langgraph/cloud/how-tos/auth/
+    
     """
 
     user_id: str
@@ -44,7 +43,7 @@ class Context(TypedDict):
     """Context parameters for the agent.
 
     Set these when creating assistants OR when invoking the graph.
-    See: https://langchain-ai.github.io/langgraph/cloud/how-tos/configuration_cloud/
+    
     """
 
     thread_id: str
@@ -55,7 +54,7 @@ class AgentState(TypedDict):
     """State schema for the MCP agent.
 
     Follows the MessagesState pattern for chat-based agents.
-    See: https://langchain-ai.github.io/langgraph/concepts/agentic-agents/
+    
     """
 
     messages: Annotated[list[BaseMessage], add_messages]
@@ -420,45 +419,6 @@ async def handle_tool_calls(
             ]
         }
 
-
-async def initialize_checkpointer() -> Any:
-    """Initialize PostgreSQL checkpointer for state persistence.
-
-    Returns:
-        Configured AsyncPostgresSaver instance, or MemorySaver as fallback
-
-    Raises:
-        ValueError: If database connection fails
-    """
-    try:
-        from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
-    except ImportError as e:
-        logger.warning(
-            f"PostgreSQL checkpointer not available: {e}. Using memory checkpointer."
-        )
-        from langgraph.checkpoint.memory import MemorySaver
-
-        return MemorySaver()
-
-    db_uri = os.getenv(
-        "POSTGRES_URI",
-        "postgresql://postgres:postgres@localhost:5432/mcp_agent",
-    )
-
-    try:
-        checkpointer = AsyncPostgresSaver.from_conn_string(db_uri)
-        await checkpointer.setup()
-        logger.info("PostgreSQL checkpointer initialized successfully")
-        return checkpointer
-    except Exception as e:
-        logger.warning(
-            f"Failed to initialize PostgreSQL checkpointer: {e}. Using memory checkpointer."
-        )
-        from langgraph.checkpoint.memory import MemorySaver
-
-        return MemorySaver()
-
-
 async def create_agent_graph() -> StateGraph:
     """Create and compile the agent graph.
 
@@ -469,7 +429,7 @@ async def create_agent_graph() -> StateGraph:
     4. → END (Model responds directly to user)
 
     Returns:
-        Compiled LangGraph StateGraph with PostgreSQL persistence
+        Compiled LangGraph StateGraph
     """
     # Initialize checkpointer
     # checkpointer = await initialize_checkpointer()
