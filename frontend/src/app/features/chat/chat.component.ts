@@ -17,7 +17,6 @@ import { marked } from 'marked';
       <aside class="sidebar" [class.open]="isSidebarOpen()">
         <button class="close-sidebar-btn" (click)="closeSidebar()">✕</button>
         <div class="sidebar-header">
-          <h3>Orchestrator</h3>
         </div>
         
         <div class="sidebar-info">
@@ -29,10 +28,10 @@ import { marked } from 'marked';
             <span class="label">Role</span>
             <span class="value">{{ roles().join(', ') || 'N/A' }}</span>
           </div>
-          <div class="info-item">
+          <!-- <div class="info-item">
             <span class="label">Thread ID</span>
             <span class="value code">{{ threadId().slice(0, 8) }}...</span>
-          </div>
+          </div> -->
         </div>
 
         <div class="sidebar-actions">

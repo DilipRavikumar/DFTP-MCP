@@ -3,7 +3,7 @@
     {
         "spec_link": "http://localhost:8082/v3/api-docs",
         "base_url": "http://localhost:8082",
-        "server_name": "Petstore MCP Server"
+        "server_name": "Order Ingestion MCP Server"
     }
   ]
 }

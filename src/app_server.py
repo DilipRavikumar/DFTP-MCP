@@ -257,21 +257,31 @@ def normalize_user_context(payload: Dict[str, Any]) -> Dict[str, Any]:
 def extract_user_context_from_request(req: Request) -> Optional[Dict[str, Any]]:
     """Extracts and normalizes user context from request cookies or headers."""
     token = req.cookies.get("access_token")
+    logger.debug(f"[AUTH] Token from cookies: {'Found' if token else 'Not found'}")
+    
     if not token:
          auth_header = req.headers.get("Authorization")
+         logger.debug(f"[AUTH] Authorization header: {'Found' if auth_header else 'Not found'}")
          if auth_header and auth_header.startswith("Bearer "):
             token = auth_header.split(" ")[1]
+            logger.debug(f"[AUTH] Extracted token from Bearer header")
             
     if not token:
+        logger.warning("[AUTH] No token found in cookies or headers!")
         return None
         
     try:
         # Decode without verification for internal use
         # In production, you would verify the signature here
         payload = jwt.decode(token, options={"verify_signature": False})
-        return normalize_user_context(payload)
+        logger.debug(f"[AUTH] JWT payload keys: {list(payload.keys())}")
+        logger.debug(f"[AUTH] JWT roles field: {payload.get('roles', [])}")
+        logger.debug(f"[AUTH] JWT resource_access: {payload.get('resource_access', {})}")
+        context = normalize_user_context(payload)
+        logger.info(f"[AUTH] Extracted user context: user_id={context.get('user_id')}, roles={context.get('roles')}")
+        return context
     except Exception as e:
-        logger.error(f"Error extracting user context: {e}")
+        logger.error(f"[AUTH] Error extracting user context: {e}")
         return None
 
 @app.post("/api/chat")
@@ -282,12 +292,14 @@ async def chat(request: ChatRequest, req: Request):
     
     # Default for dev if auth fails or not enabled
     if not user_context:
-        logger.warning("No valid auth found, using DEV context")
+        logger.warning("[CHAT] No user context extracted! Using DEV fallback with admin role")
         user_context = {
              "user_id": "test_user",
              "roles": ["admin"],
              "scope": ["mcp-agent", "order-agent", "nav-agent", "router-agent", "mutual funds"]
         }
+    else:
+        logger.info(f"[CHAT] User context extracted: user_id={user_context.get('user_id')}, roles={user_context.get('roles')}")
 
     return StreamingResponse(
         stream_generator(request.message, request.thread_id, user_context),
@@ -308,12 +320,15 @@ async def upload_file(
     
     if not user_context:
         # Default for dev
+        logger.warning("[UPLOAD] No user context extracted! Using DEV fallback with admin role")
         user_context = {
              "user_id": "test_user",
              "username": "DevUser",
              "roles": ["admin"],
              "scope": ["mutual funds", "mcp-agent", "order-agent", "nav-agent", "router-agent"]
         }
+    else:
+        logger.info(f"[UPLOAD] User context extracted: user_id={user_context.get('user_id')}, roles={user_context.get('roles')}")
 
     # 2. Save File Locally
     try:
