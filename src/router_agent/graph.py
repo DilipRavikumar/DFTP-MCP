@@ -90,6 +90,65 @@ SYNTHESIZER_SYSTEM_PROMPT = """You are a response synthesizer. Your job is to co
 Analyze the results provided and synthesize them into a clear, organized response that directly answers the user's original question."""
 
 
+# ========== ROLE-BASED ACCESS CONTROL ==========
+
+def _check_agent_access(user_context: UserContext, agent_name: str) -> tuple[bool, str]:
+    """Check if user has access to a specific agent based on their role.
+    
+    Authorization Rules:
+    - ORDER AGENT: Requires role "distributor" OR "admin"
+    - NAV AGENT: Requires role "fundhouse" OR "admin"
+    - MCP AGENT: Accessible to "distributor", "fundhouse", or "admin"
+    
+    Args:
+        user_context: User context with role information
+        agent_name: Name of the agent ('order', 'nav', 'mcp')
+        
+    Returns:
+        Tuple of (is_authorized: bool, message: str)
+    """
+    # Get user roles (handle both single role and roles list)
+    user_role = user_context.get("role", "").lower()
+    user_roles = [r.lower() for r in user_context.get("roles", [])] if user_context.get("roles") else []
+    
+    # Combine both for easier checking
+    all_roles = {user_role} | set(user_roles)
+    all_roles.discard("")  # Remove empty strings
+    
+    logger.info(f"[RBAC] Checking access for agent '{agent_name}': user_id={user_context.get('user_id')}, roles={all_roles}")
+    
+    if agent_name.lower() == "order":
+        if "admin" in all_roles or "distributor" in all_roles:
+            logger.info(f"[RBAC] User {user_context.get('user_id')} AUTHORIZED for order agent (roles: {all_roles})")
+            return True, "User authorized for order agent"
+        else:
+            msg = f"[RBAC] User {user_context.get('user_id')} DENIED access to order agent. Required: 'distributor' or 'admin', Got: {all_roles}"
+            logger.warning(msg)
+            return False, "Access denied."
+    
+    elif agent_name.lower() == "nav":
+        if "admin" in all_roles or "fundhouse" in all_roles:
+            logger.info(f"[RBAC] User {user_context.get('user_id')} AUTHORIZED for nav agent (roles: {all_roles})")
+            return True, "User authorized for nav agent"
+        else:
+            msg = f"[RBAC] User {user_context.get('user_id')} DENIED access to nav agent. Required: 'fund_house' or 'admin', Got: {all_roles}"
+            logger.warning(msg)
+            return False, "Access denied."
+    
+    elif agent_name.lower() == "mcp":
+        if "admin" in all_roles or "distributor" in all_roles or "fundhouse" in all_roles:
+            logger.info(f"[RBAC] User {user_context.get('user_id')} AUTHORIZED for MCP agent (roles: {all_roles})")
+            return True, "User authorized for MCP agent"
+        else:
+            msg = f"[RBAC] User {user_context.get('user_id')} DENIED access to MCP agent. Required: any of 'distributor', 'fundhouse', or 'admin', Got: {all_roles}"
+            logger.warning(msg)
+            return False, "Access denied."
+    
+    else:
+        logger.warning(f"[RBAC] Unknown agent: {agent_name}")
+        return False, f"Unknown agent: {agent_name}"
+
+
 async def _load_subagent(agent_name: str) -> Any:
     """Dynamically load a subagent graph.
 
@@ -140,30 +199,50 @@ async def classify_query(
     try:
         from langchain_aws.chat_models import ChatBedrock
 
-        user_context = config.get("configurable", {}).get("user", {})
+        # LOG: Capture raw config to verify user details propagation
+        logger.info(f"[ROUTER] classify_query() called with config keys: {list(config.keys())}")
+        configurable = config.get("configurable", {})
+        logger.info(f"[ROUTER] configurable keys: {list(configurable.keys())}")
+        
+        user_context = configurable.get("user", {})
+        logger.info(f"[ROUTER] Raw user_context from config: {user_context}")
+        logger.info(f"[ROUTER] user_context keys: {list(user_context.keys()) if user_context else 'EMPTY'}")
+        
         if not user_context:
-            logger.warning("No user context found. Using default 'test_user' for development.")
+            logger.warning(" [ROUTER] No user context found. Using default 'test_user' for development.")
             user_context = {
                 "user_id": "test_user",
                 "roles": ["admin"],
                 "scope": ["mcp-agent", "order-agent", "nav-agent", "router-agent"]
             }
+            logger.warning(f" [ROUTER] Using fallback user_context: {user_context}")
             # raise ValueError("User context is required in config")
+        else:
+            logger.info(f"  [ROUTER] User context successfully received:")
+            logger.info(f"   - user_id: {user_context.get('user_id')}")
+            logger.info(f"   - role: {user_context.get('role')}")
+            logger.info(f"   - roles: {user_context.get('roles')}")
+            logger.info(f"   - scope: {user_context.get('scope')}")
 
         # Get the latest user message
         messages = state["messages"]
+        logger.info(f"[ROUTER] Message count in state: {len(messages)}")
+        
         user_message = None
         for msg in reversed(messages):
             if isinstance(msg, HumanMessage):
                 user_message = msg
+                logger.info(f"[ROUTER] Found latest HumanMessage: {msg.content[:100]}")
                 break
 
         if not user_message:
+            logger.warning("[ROUTER]  No HumanMessage found in state")
             return {
                 "route_decision": "general",
             }
 
         # Classify the query
+        logger.info(f"[ROUTER] Classifying query for user: {user_context.get('user_id')}")
         model = ChatBedrock(
             model_id=os.getenv(
                 "BEDROCK_MODEL_ID",
@@ -187,19 +266,21 @@ async def classify_query(
                     line for line in response_text.split("\n") if "ROUTE:" in line
                 ][0]
                 route_decision = route_line.split("ROUTE:")[1].strip().lower()
+                logger.info(f"[ROUTER] Parsed route decision: {route_decision}")
             except (IndexError, ValueError):
-                logger.warning(f"Could not parse route decision: {response_text}")
+                logger.warning(f"[ROUTER]  Could not parse route decision: {response_text}")
 
         logger.info(
-            f"Query classified as '{route_decision}' for user {user_context.get('user_id')}"
+            f" [ROUTER] Query classified as '{route_decision}' for user {user_context.get('user_id')} "
+            f"(user_context propagated: {bool(user_context and user_context.get('user_id') != 'test_user')})"
         )
-
+        
         return {
             "route_decision": route_decision,
         }
 
     except Exception as e:
-        logger.error(f"Error in classify_query: {e}")
+        logger.error(f" [ROUTER] Error in classify_query: {e}", exc_info=True)
         return {
             "route_decision": "general",
         }
@@ -212,6 +293,7 @@ async def invoke_order_agent(
     """Invoke the order agent as a subgraph.
 
     Transforms router state to order agent state and back.
+     ROLE-BASED ACCESS: Requires 'distributor' or 'admin' role
 
     Args:
         state: Current router state
@@ -221,22 +303,48 @@ async def invoke_order_agent(
         Updated state with order agent result
     """
     try:
+        #  LOG: Capture user context at order agent invocation
+        logger.info("[ROUTER→ORDER] invoke_order_agent() called")
+        logger.info(f"[ROUTER→ORDER] config keys: {list(config.keys())}")
+        
         user_context = config.get("configurable", {}).get("user", {})
+        logger.info(f"[ROUTER→ORDER] User context from config: {user_context}")
+        
+        # ========== ROLE-BASED ACCESS CHECK (BEFORE FALLBACK) ==========
+        is_authorized, auth_message = _check_agent_access(user_context, "order")
+        if not is_authorized:
+            logger.warning(f" [ROUTER→ORDER] Access denied for user {user_context.get('user_id')}")
+            return {
+                "order_result": auth_message,
+                "messages": [AIMessage(content=f"{auth_message}")],
+            }
+        # ================================================================
+        
         if not user_context:
-             user_context = {
+            logger.warning("[ROUTER→ORDER] No user context received from router!")
+            user_context = {
                 "user_id": "test_user",
                 "roles": ["admin"], # Updated to list
                 "scope": ["mutual funds", "mcp-agent", "order-agent", "nav-agent", "router-agent"]
             }
+            logger.warning(f" [ROUTER→ORDER] Using fallback: {user_context}")
+        else:
+            logger.info(f" [ROUTER→ORDER] User context successfully propagated:")
+            logger.info(f"   - user_id: {user_context.get('user_id')}")
+            logger.info(f"   - roles: {user_context.get('roles')}")
+            logger.info(f"   - scope: {user_context.get('scope')}")
 
         # Load order agent
+        logger.info("[ROUTER→ORDER] Loading order agent subgraph...")
         order_graph = await _load_subagent("order")
 
         # Transform state: extract user messages for order agent
         messages = state["messages"]
+        logger.info(f"[ROUTER→ORDER] Preparing state with {len(messages)} messages")
         order_state = {"messages": messages}
 
         # Invoke order agent with user context
+        logger.info(f"[ROUTER→ORDER] Invoking order agent for user: {user_context.get('user_id')}")
         order_config = {
             "configurable": {
                 "thread_id": config.get("configurable", {}).get("thread_id", "default"),
@@ -255,7 +363,8 @@ async def invoke_order_agent(
                     break
 
         logger.info(
-            f"Order agent completed for user {user_context.get('user_id')}: {final_message[:100]}"
+            f" [ROUTER→ORDER] Order agent completed for user {user_context.get('user_id')}: "
+            f"{final_message[:100] if final_message else 'NO RESPONSE'}"
         )
 
         return {
@@ -264,7 +373,7 @@ async def invoke_order_agent(
         }
 
     except Exception as e:
-        logger.error(f"Error invoking order agent: {e}")
+        logger.error(f" [ROUTER→ORDER] Error invoking order agent: {e}", exc_info=True)
         return {
             "order_result": f"Error: {str(e)}",
             "messages": [AIMessage(content=f"Order agent error: {str(e)}")],
@@ -278,6 +387,7 @@ async def invoke_nav_agent(
     """Invoke the NAV agent as a subgraph.
 
     Transforms router state to NAV agent state and back.
+     ROLE-BASED ACCESS: Requires 'fundhouse' or 'admin' role
 
     Args:
         state: Current router state
@@ -289,22 +399,48 @@ async def invoke_nav_agent(
     try:
         from langchain_core.messages import ToolMessage
         
+        #  LOG: Capture user context at NAV agent invocation
+        logger.info("[ROUTER→NAV] invoke_nav_agent() called")
+        logger.info(f"[ROUTER→NAV] config keys: {list(config.keys())}")
+        
         user_context = config.get("configurable", {}).get("user", {})
+        logger.info(f"[ROUTER→NAV] User context from config: {user_context}")
+        
+        # ========== ROLE-BASED ACCESS CHECK (BEFORE FALLBACK) ==========
+        is_authorized, auth_message = _check_agent_access(user_context, "nav")
+        if not is_authorized:
+            logger.warning(f" [ROUTER→NAV] Access denied for user {user_context.get('user_id')}")
+            return {
+                "nav_result": auth_message,
+                "messages": [AIMessage(content=f"{auth_message}")],
+            }
+        # ================================================================
+        
         if not user_context:
+            logger.warning(" [ROUTER→NAV] No user context received from router!")
             user_context = {
                 "user_id": "test_user",
                 "roles": ["admin"],
                 "scope": ["mcp-agent", "order-agent", "nav-agent", "router-agent"]
             }
+            logger.warning(f" [ROUTER→NAV] Using fallback: {user_context}")
+        else:
+            logger.info(f" [ROUTER→NAV] User context successfully propagated:")
+            logger.info(f"   - user_id: {user_context.get('user_id')}")
+            logger.info(f"   - roles: {user_context.get('roles')}")
+            logger.info(f"   - scope: {user_context.get('scope')}")
 
         # Load NAV agent
+        logger.info("[ROUTER→NAV] Loading NAV agent subgraph...")
         nav_graph = await _load_subagent("nav")
 
         # Transform state: extract user messages for NAV agent
         messages = state["messages"]
+        logger.info(f"[ROUTER→NAV] Preparing state with {len(messages)} messages")
         nav_state = {"messages": messages}
 
         # Invoke NAV agent with user context
+        logger.info(f"[ROUTER→NAV] Invoking NAV agent for user: {user_context.get('user_id')}")
         nav_config = {
             "configurable": {
                 "thread_id": config.get("configurable", {}).get("thread_id", "default"),
@@ -317,20 +453,20 @@ async def invoke_nav_agent(
         # Extract final message from NAV agent result
         final_message = ""
         
-        logger.info(f"NAV agent result keys: {result.keys() if isinstance(result, dict) else 'not a dict'}")
-        logger.info(f"NAV agent messages count: {len(result.get('messages', []))} messages")
+        logger.info(f"[ROUTER→NAV] NAV agent result keys: {result.keys() if isinstance(result, dict) else 'not a dict'}")
+        logger.info(f"[ROUTER→NAV] NAV agent messages count: {len(result.get('messages', []))} messages")
         
         # Log all messages for debugging
         if "messages" in result:
             for i, msg in enumerate(result["messages"]):
-                logger.debug(f"Message {i}: {type(msg).__name__} - {str(msg.content)[:100]}")
+                logger.debug(f"[ROUTER→NAV] Message {i}: {type(msg).__name__} - {str(msg.content)[:100]}")
         
         # First, try to find a ToolMessage (file upload response)
         if "messages" in result:
             for msg in reversed(result["messages"]):
                 if isinstance(msg, ToolMessage):
                     final_message = msg.content
-                    logger.info(f"Extracted tool response for user {user_context.get('user_id')}")
+                    logger.info(f"[ROUTER→NAV] Extracted tool response for user {user_context.get('user_id')}")
                     break
             
             # If no ToolMessage, fall back to last AIMessage
@@ -341,7 +477,8 @@ async def invoke_nav_agent(
                         break
 
         logger.info(
-            f"NAV agent completed for user {user_context.get('user_id')}: {final_message[:100] if final_message else 'empty'}"
+            f" [ROUTER→NAV] NAV agent completed for user {user_context.get('user_id')}: "
+            f"{final_message[:100] if final_message else 'empty'}"
         )
 
         return {
@@ -350,7 +487,7 @@ async def invoke_nav_agent(
         }
 
     except Exception as e:
-        logger.error(f"Error invoking NAV agent: {e}")
+        logger.error(f" [ROUTER→NAV] Error invoking NAV agent: {e}", exc_info=True)
         return {
             "nav_result": f"Error: {str(e)}",
             "messages": [AIMessage(content=f"NAV agent error: {str(e)}")],
@@ -371,22 +508,47 @@ async def invoke_mcp_agent(
         Updated state with MCP agent response
     """
     try:
+        #  LOG: Capture user context at MCP agent invocation
+        logger.info("[ROUTER→MCP] invoke_mcp_agent() called")
+        logger.info(f"[ROUTER→MCP] config keys: {list(config.keys())}")
+        
         user_context = config.get("configurable", {}).get("user", {})
+        logger.info(f"[ROUTER→MCP] User context from config: {user_context}")
+        
+        # ========== ROLE-BASED ACCESS CHECK (BEFORE FALLBACK) ==========
+        is_authorized, auth_message = _check_agent_access(user_context, "mcp")
+        if not is_authorized:
+            logger.warning(f"[ROUTER→MCP] Access denied for user {user_context.get('user_id')}")
+            return {
+                "messages": [AIMessage(content=f" {auth_message}")],
+            }
+        # ================================================================
+        
         if not user_context:
+            logger.warning(" [ROUTER→MCP] No user context received from router!")
             user_context = {
                 "user_id": "test_user",
                 "roles": ["admin"],
                 "scope": ["mcp-agent", "order-agent", "nav-agent", "router-agent"]
             }
+            logger.warning(f" [ROUTER→MCP] Using fallback: {user_context}")
+        else:
+            logger.info(f" [ROUTER→MCP] User context successfully propagated:")
+            logger.info(f"   - user_id: {user_context.get('user_id')}")
+            logger.info(f"   - roles: {user_context.get('roles')}")
+            logger.info(f"   - scope: {user_context.get('scope')}")
         
         # Load MCP agent
+        logger.info("[ROUTER→MCP] Loading MCP agent subgraph...")
         mcp_graph = await _load_subagent("mcp")
         
         # Transform state
         messages = state["messages"]
+        logger.info(f"[ROUTER→MCP] Preparing state with {len(messages)} messages")
         mcp_state = {"messages": messages}
         
         # Invoke MCP agent
+        logger.info(f"[ROUTER→MCP] Invoking MCP agent for user: {user_context.get('user_id')}")
         mcp_config = {
             "configurable": {
                 "thread_id": config.get("configurable", {}).get("thread_id", "default"),
@@ -399,19 +561,27 @@ async def invoke_mcp_agent(
         # Extract final message
         final_message = ""
         if "messages" in result:
+            logger.info(f"[ROUTER→MCP] MCP agent returned {len(result['messages'])} messages")
+            for i, msg in enumerate(result["messages"]):
+                logger.debug(f"[ROUTER→MCP] Message {i}: {type(msg).__name__}")
+            
             for msg in reversed(result["messages"]):
                 if isinstance(msg, AIMessage):
                     final_message = msg.content
+                    logger.info(f"[ROUTER→MCP] Extracted AIMessage response")
                     break
         
-        logger.info(f"MCP agent completed for user {user_context.get('user_id')}")
+        logger.info(
+            f" [ROUTER→MCP] MCP agent completed for user {user_context.get('user_id')}: "
+            f"{final_message[:100] if final_message else 'empty'}"
+        )
         
         return {
             "messages": [AIMessage(content=final_message or "MCP agent completed")],
         }
         
     except Exception as e:
-        logger.error(f"Error invoking MCP agent: {e}")
+        logger.error(f" [ROUTER→MCP] Error invoking MCP agent: {e}", exc_info=True)
         return {
             "messages": [AIMessage(content=f"Hello! I'm here to help. Error: {str(e)}")],
         }
@@ -433,13 +603,26 @@ async def synthesize_results(
     try:
         from langchain_aws.chat_models import ChatBedrock
 
+        #  LOG: Capture user context at synthesis stage
+        logger.info("[ROUTER→SYNTHESIZE] synthesize_results() called")
+        logger.info(f"[ROUTER→SYNTHESIZE] config keys: {list(config.keys())}")
+        
         user_context = config.get("configurable", {}).get("user", {})
+        logger.info(f"[ROUTER→SYNTHESIZE] User context from config: {user_context}")
+        
         if not user_context:
-             user_context = {
+            logger.warning(" [ROUTER→SYNTHESIZE] No user context received!")
+            user_context = {
                 "user_id": "test_user",
                 "roles": ["admin"],
                 "scope": ["mcp-agent", "order-agent", "nav-agent", "router-agent"]
             }
+            logger.warning(f" [ROUTER→SYNTHESIZE] Using fallback: {user_context}")
+        else:
+            logger.info(f" [ROUTER→SYNTHESIZE] User context successfully propagated:")
+            logger.info(f"   - user_id: {user_context.get('user_id')}")
+            logger.info(f"   - roles: {user_context.get('roles')}")
+            logger.info(f"   - scope: {user_context.get('scope')}")
 
         # Collect results
         results = []
@@ -578,11 +761,16 @@ async def create_router_graph() -> StateGraph:
     Returns:
         Compiled LangGraph StateGraph with PostgreSQL persistence
     """
+    logger.info("═" * 80)
+    logger.info(" [ROUTER] Router Graph Initialization Started")
+    logger.info("═" * 80)
+    
     # Initialize checkpointer
     # checkpointer = await initialize_checkpointer()
 
     # Create state graph
     graph = StateGraph(RouterState, config_schema=Context)
+    logger.info("[ROUTER] StateGraph created with RouterState schema")
 
     # Add nodes
     graph.add_node("classify_query", classify_query)
@@ -590,9 +778,11 @@ async def create_router_graph() -> StateGraph:
     graph.add_node("nav_agent", invoke_nav_agent)
     graph.add_node("mcp_agent", invoke_mcp_agent)
     graph.add_node("synthesize", synthesize_results)
+    logger.info("[ROUTER] Added 5 nodes: classify_query, order_agent, nav_agent, mcp_agent, synthesize")
 
     # Add edges
     graph.add_edge(START, "classify_query")
+    logger.info("[ROUTER] Router graph initialized and ready to receive user context")
 
     # Conditional routing based on classification
     graph.add_conditional_edges(

@@ -218,13 +218,13 @@ async def call_model(
         from langchain_core.messages import AIMessage
 
         user_context = config.get("configurable", {}).get("user", {})
-        if not user_context:
-            logger.warning("No user context found. Using default 'test_user' for development.")
-            user_context = {
-                "user_id": "test_user",
-                "roles": ["admin"],
-                "scope": ["mcp-agent", "order-agent", "nav-agent", "router-agent"]
-            }
+        # if not user_context:
+        #     logger.warning("No user context found. Using default 'test_user' for development.")
+        #     user_context = {
+        #         "user_id": "test_user",
+        #         "roles": ["admin"],
+        #         "scope": ["mcp-agent", "order-agent", "nav-agent", "router-agent"]
+        #     }
             # raise ValueError("User context is required in config")
 
         # Initialize MCP tools based on user authorization
@@ -320,13 +320,13 @@ async def handle_tool_calls(
     messages = state["messages"]
     last_message = messages[-1]
     user_context = config.get("configurable", {}).get("user", {})
-    if not user_context:
-         # Fallback for dev
-         user_context = {
-            "user_id": "test_user",
-            "roles": ["admin"],
-            "scope": ["mcp-agent", "order-agent", "nav-agent", "router-agent"]
-        }
+    # if not user_context:
+    #      # Fallback for dev
+    #      user_context = {
+    #         "user_id": "test_user",
+    #         "roles": ["admin"],
+    #         "scope": ["mcp-agent", "order-agent", "nav-agent", "router-agent"]
+    #     }
 
     if not hasattr(last_message, "tool_calls"):
         return {"messages": []}
