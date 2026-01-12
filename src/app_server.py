@@ -135,33 +135,18 @@ def callback(code: str = None):
 @app.get("/api/auth/me")
 def me(request: Request):
     """Returns current user info based on token"""
-    token = request.cookies.get("access_token")
-    if not token:
-        # Check Authorization header as fallback
-        auth_header = request.headers.get("Authorization")
-        if auth_header and auth_header.startswith("Bearer "):
-            token = auth_header.split(" ")[1]
+    user_context = extract_user_context_from_request(request)
+    
+    if not user_context:
+        return {"authenticated": False, "scope": "General", "user_id": "anonymous", "roles": []}
 
-    if not token:
-        return {"authenticated": False, "scope": "General", "user_id": "anonymous"}
-
-    try:
-        # Decode without verification for internal use (Gateway verified it, or we verify here)
-        # In prod, verify signature with Keycloak public key
-        payload = jwt.decode(token, options={"verify_signature": False})
-        user_scope = payload.get("scope", "General")
-        
-        return {
-            "authenticated": True,
-            "user_id": payload.get("sub"),
-            "username": payload.get("preferred_username"),
-            "scope": user_scope,
-            # Extract Client Roles: resource_access.{CLIENT_ID}.roles
-            "roles": payload.get("resource_access", {}).get(CLIENT_ID, {}).get("roles", [])
-        }
-    except Exception as e:
-        logger.error(f"Token decode error: {e}")
-        return {"authenticated": False, "error": str(e)}
+    return {
+        "authenticated": True,
+        "user_id": user_context.get("user_id"),
+        "username": user_context.get("username"),
+        "scope": user_context.get("scope"),
+        "roles": user_context.get("roles", [])
+    }
 
 # --- Chat / Agent Routes ---
 

@@ -26,6 +26,10 @@ import { marked } from 'marked';
             <span class="value">{{ scope() }}</span>
           </div>
           <div class="info-item">
+            <span class="label">Role</span>
+            <span class="value">{{ roles().join(', ') || 'N/A' }}</span>
+          </div>
+          <div class="info-item">
             <span class="label">Thread ID</span>
             <span class="value code">{{ threadId().slice(0, 8) }}...</span>
           </div>
@@ -158,6 +162,7 @@ export class ChatComponent {
 
   threadId = signal<string>(crypto.randomUUID());
   scope = this.authService.currentUserScope;
+  roles = this.authService.currentUserRoles;
 
   toggleSidebar() {
     this.isSidebarOpen.update(v => !v);
