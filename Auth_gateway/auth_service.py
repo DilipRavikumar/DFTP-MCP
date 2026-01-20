@@ -1,6 +1,5 @@
 from fastapi import FastAPI, Response, Request, HTTPException
 from fastapi.responses import RedirectResponse
-from fastapi.middleware.cors import CORSMiddleware
 import requests
 import httpx
 import jwt
@@ -10,22 +9,6 @@ app = FastAPI()
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-
-# Configure CORS for frontend
-origins = [
-    "http://localhost:4200",
-    "http://localhost:8081",
-    "http://localhost:8000",
-]
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=origins,
-    allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allow_headers=["*"],
-    expose_headers=["*"],
-)
 
 KEYCLOAK_URL = "http://localhost:8180"
 REALM = "authentication"
