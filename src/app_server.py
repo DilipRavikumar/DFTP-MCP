@@ -93,98 +93,19 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
     allow_headers=["*"],
+    expose_headers=["*"],
+    max_age=3600,
 )
 
 
-KEYCLOAK_URL = "http://localhost:8180"
-REALM = "authentication"
-CLIENT_ID = "public-client"
-
-BACKEND_URL = "http://localhost:8081"
-FRONTEND_URL = "http://localhost:4200"
-CALLBACK_URI = f"{BACKEND_URL}/api/auth/callback"
+GATEWAY_URL = "http://localhost:8081"
 
 
 class ChatRequest(BaseModel):
     message: str
     thread_id: str = "default"
-
-# Authentication Routes
-
-@app.get("/api/auth/login")
-def login():
-    keycloak_login_url = (
-        f"{KEYCLOAK_URL}/realms/{REALM}/protocol/openid-connect/auth"
-        f"?client_id={CLIENT_ID}"
-        f"&response_type=code"
-        f"&redirect_uri={CALLBACK_URI}"
-    )
-    return RedirectResponse(keycloak_login_url)
-
-from urllib.parse import quote
-
-@app.get("/api/auth/logout")
-def logout():
-    post_logout_redirect = quote(FRONTEND_URL)
-
-    logout_url = (
-        f"{KEYCLOAK_URL}/realms/{REALM}/protocol/openid-connect/logout"
-        f"?client_id={CLIENT_ID}"
-        f"&post_logout_redirect_uri={post_logout_redirect}"
-    )
-    response = RedirectResponse(logout_url)
-    response.delete_cookie("access_token", path="/")
-    return response
-
-@app.get("/api/auth/callback")
-def callback(code: str = None):
-    if not code:
-        return RedirectResponse(FRONTEND_URL)
-
-    try:
-        data = {
-            "client_id": CLIENT_ID,
-            "grant_type": "authorization_code",
-            "code": code,
-            "redirect_uri": CALLBACK_URI,
-        }
-
-        token_response = requests.post(
-            f"{KEYCLOAK_URL}/realms/{REALM}/protocol/openid-connect/token",
-            data=data,
-            headers={"Content-Type": "application/x-www-form-urlencoded"},
-        )
-
-        token_response.raise_for_status()
-        token_data = token_response.json()
-        access_token = token_data.get("access_token")
-
-        if not access_token:
-            raise HTTPException(status_code=401, detail="Access token missing")
-
-        response = RedirectResponse(
-            url=f"{FRONTEND_URL}/login-callback",
-            status_code=302,
-        )
-
-        response.set_cookie(
-            key="access_token",
-            value=access_token,
-            httponly=False,
-            secure=False,
-            samesite="Lax",
-            path="/",
-        )
-
-        return response
-
-    except Exception as e:
-        logger.error(f"Auth callback error: {e}")
-        return RedirectResponse(
-            f"{FRONTEND_URL}?error=auth_failed&details={str(e)}"
-        )
 
 def normalize_user_context(payload: Dict[str, Any]) -> Dict[str, Any]:
     """Normalizes role and scope from JWT payload into lists."""
@@ -198,11 +119,7 @@ def normalize_user_context(payload: Dict[str, Any]) -> Dict[str, Any]:
     roles = payload.get("roles", [])
 
     # Handle Keycloak client roles
-    client_roles = (
-        payload.get("resource_access", {})
-        .get(CLIENT_ID, {})
-        .get("roles", [])
-    )
+    client_roles = payload.get("resource_access", {}).get("public-client", {}).get("roles", [])
     if client_roles:
         roles.extend(client_roles)
 
@@ -267,27 +184,84 @@ def extract_user_context_from_request(
         return None
 
 
+# Authentication Proxy Routes (Forward to Auth Gateway)
+@app.get("/api/auth/login")
+async def login():
+    """Proxy login request to auth gateway."""
+    async with httpx.AsyncClient() as client:
+        try:
+            response = await client.get(
+                "http://localhost:8000/api/auth/login",
+                follow_redirects=False
+            )
+            return RedirectResponse(url=response.headers.get("location", "http://localhost:4200/login-callback"))
+        except Exception as e:
+            logger.error(f"[AUTH] Login proxy error: {e}")
+            raise HTTPException(status_code=502, detail="Auth gateway unavailable")
+
+
+@app.get("/api/auth/logout")
+async def logout():
+    """Proxy logout request to auth gateway."""
+    async with httpx.AsyncClient() as client:
+        try:
+            response = await client.get(
+                "http://localhost:8000/api/auth/logout",
+                follow_redirects=False
+            )
+            redirect = RedirectResponse(url=response.headers.get("location", "http://localhost:4200"))
+            redirect.delete_cookie("access_token", path="/")
+            return redirect
+        except Exception as e:
+            logger.error(f"[AUTH] Logout proxy error: {e}")
+            raise HTTPException(status_code=502, detail="Auth gateway unavailable")
+
+
+@app.get("/api/auth/callback")
+async def callback(code: str = None):
+    """Proxy callback request to auth gateway."""
+    async with httpx.AsyncClient() as client:
+        try:
+            params = {"code": code} if code else {}
+            response = await client.get(
+                "http://localhost:8000/api/auth/callback",
+                params=params,
+                follow_redirects=False
+            )
+            
+            # Get the redirect URL from the gateway
+            redirect_url = response.headers.get("location", "http://localhost:4200/login-callback")
+            redirect = RedirectResponse(url=redirect_url)
+            
+            # Forward set-cookie headers from gateway
+            if "set-cookie" in response.headers:
+                redirect.headers["set-cookie"] = response.headers["set-cookie"]
+            
+            return redirect
+        except Exception as e:
+            logger.error(f"[AUTH] Callback proxy error: {e}")
+            raise HTTPException(status_code=502, detail="Auth gateway unavailable")
+
+
 @app.get("/api/auth/me")
-def me(request: Request):
-    """Return current authenticated user information."""
-
-    user_context = extract_user_context_from_request(request)
-
-    if not user_context:
-        return {
-            "authenticated": False,
-            "scope": "General",
-            "user_id": "anonymous",
-            "roles": [],
-        }
-
-    return {
-        "authenticated": True,
-        "user_id": user_context.get("user_id"),
-        "username": user_context.get("username"),
-        "scope": user_context.get("scope"),
-        "roles": user_context.get("roles", []),
-    }
+async def me(request: Request):
+    """Proxy /me request to auth gateway for authenticated user info."""
+    async with httpx.AsyncClient() as client:
+        try:
+            headers = {"Cookie": request.headers.get("cookie", "")}
+            response = await client.get(
+                "http://localhost:8000/api/auth/me",
+                headers=headers
+            )
+            return response.json()
+        except Exception as e:
+            logger.error(f"[AUTH] Me proxy error: {e}")
+            return {
+                "authenticated": False,
+                "scope": "General",
+                "user_id": "anonymous",
+                "roles": [],
+            }
 
 
 async def stream_generator(
