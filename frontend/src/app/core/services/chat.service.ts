@@ -28,25 +28,37 @@ export class ChatService {
 
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
+    
+    let buffer = ""; 
 
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
 
-      const chunk = decoder.decode(value, { stream: true });
-      const lines = chunk.split("\n");
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() || "";
 
       for (const line of lines) {
-        if (!line.trim()) continue;
+        const trimmedLine = line.trim();
+        if (!trimmedLine) continue;
+
         try {
-          const data = JSON.parse(line);
+          const data = JSON.parse(trimmedLine);
+          
           if (data.type === "message") {
-            yield data.content;
+            let content = data.content;
+            if (content.startsWith("ROUTE:")) {
+                content = content.replace(/^ROUTE:.*?REASON:.*?\n?/s, "").trim();
+            }
+            
+            if (content) yield content;
+
           } else if (data.type === "error") {
             throw new Error(data.content);
           }
         } catch (e) {
-          console.warn("Failed to parse chunk:", line);
+          console.error("JSON Parse Error on line:", trimmedLine, e);
         }
       }
     }
@@ -62,7 +74,6 @@ export class ChatService {
     formData.append("thread_id", threadId);
     formData.append("description", description);
 
-    // Include credentials to send auth token in cookies
     return this.http.post(`${this.apiUrl}/upload`, formData, {
       withCredentials: true,
     });

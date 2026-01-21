@@ -210,9 +210,15 @@ export class ChatComponent {
         });
       }
     } catch (err) {
-      console.error(err);
-      this.messages.update(msgs => [...msgs, { role: 'assistant', content: '❌ Error: Failed to get response.' }]);
-    } finally {
+  console.error(err);
+  this.messages.update(msgs => {
+    const newMsgs = [...msgs];
+    newMsgs[newMsgs.length - 1] = {
+      role: 'assistant',
+      content: 'Error: Failed to get response.'
+    };
+    return newMsgs;
+  });    } finally {
       this.isTyping.set(false);
     }
   }

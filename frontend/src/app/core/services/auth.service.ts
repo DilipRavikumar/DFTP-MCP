@@ -35,17 +35,16 @@ export class AuthService {
   }
 
   fetchUser() {
-    this.me().subscribe({
-      next: (res) => {
-        this.isAuthenticated.set(res.authenticated);
-        this.currentUserScope.set(res.scope);
-        this.currentUserRoles.set(res.roles || []);
-      },
-      error: () => {
-        this.isAuthenticated.set(false);
-        this.currentUserScope.set('General');
-        this.currentUserRoles.set([]);
-      }
-    });
+    this.http.get<any>(`${this.apiUrl}/auth/me`, { withCredentials: true })
+      .subscribe({
+        next: (res) => {
+          if (res.authenticated) {
+            this.isAuthenticated.set(true);
+            this.currentUserRoles.set(res.roles);
+            this.currentUserScope.set(res.scope);
+          }
+        },
+        error: () => this.isAuthenticated.set(false)
+      });
   }
 }

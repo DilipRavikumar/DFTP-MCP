@@ -1,6 +1,7 @@
 FROM openresty/openresty:alpine
-RUN rm -f /usr/local/openresty/nginx/conf/conf.d/default.conf
+RUN apk add --no-cache bash curl
+RUN rm -rf /usr/local/openresty/nginx/conf/nginx.conf
 COPY nginx.conf /usr/local/openresty/nginx/conf/nginx.conf
-COPY lua/ /lua/
+COPY lua /lua
 EXPOSE 8081
-CMD ["openresty", "-g", "daemon off;"]
+CMD ["/usr/local/openresty/bin/openresty", "-g", "daemon off;"]
