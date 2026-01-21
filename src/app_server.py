@@ -2,45 +2,50 @@ import os
 import json
 import logging
 import jwt
-import requests
 import uvicorn
 import httpx
-
-# Load environment variables from .env file
 from dotenv import load_dotenv
+
 load_dotenv()
 
 from fastapi import (
     FastAPI,
-    Response,
     Request,
-    HTTPException,
-    Depends,
-    File,
     UploadFile,
+    File,
     Form,
+    HTTPException,
 )
 from fastapi.responses import RedirectResponse, StreamingResponse
-from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
-from typing import List, Optional, Dict, Any
+from pydantic import BaseModel  # Required for ChatRequest
+from typing import Dict, Any, Optional, List
 from contextlib import asynccontextmanager
-
-from langgraph.store.postgres import PostgresStore
-
-import sys
 from pathlib import Path
+import sys
 
-# Add project root to path so 'src' can be imported
+# Ensure local source modules are findable
 sys.path.append(str(Path(__file__).parent.parent))
 
+from langchain_core.messages import HumanMessage
 from src.router_agent.graph import create_router_graph
+from langgraph.store.postgres import PostgresStore
 
-
+# --------------------------------------------------
+# LOGGING
+# --------------------------------------------------
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("APP_SERVER")
 
+# --------------------------------------------------
+# MODELS (The missing piece)
+# --------------------------------------------------
+class ChatRequest(BaseModel):
+    message: str
+    thread_id: str = "default"
 
+# --------------------------------------------------
+# FASTAPI LIFESPAN
+# --------------------------------------------------
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     db_uri = os.getenv(
@@ -49,341 +54,148 @@ async def lifespan(app: FastAPI):
     )
 
     store_cm = None
-    store = None
-
     try:
-        logger.warning("[LIFESPAN] Initializing PostgresStore")
-
+        logger.info("[BOOT] Initializing PostgresStore")
         store_cm = PostgresStore.from_conn_string(db_uri)
         store = store_cm.__enter__()
 
-        logger.warning("[LIFESPAN] Creating router graph with store")
         graph = await create_router_graph(store=store)
-
         app.state.graph = graph
-        app.state.store = store
 
-        logger.warning("[LIFESPAN] Router graph initialized successfully")
-
+        logger.info("[BOOT] App ready")
         yield
-
-    except Exception as e:
-        logger.exception("[LIFESPAN] Failed during startup")
-        raise e
-
     finally:
         if store_cm:
             store_cm.__exit__(None, None, None)
-            logger.info("[LIFESPAN] PostgresStore connection closed")
+            logger.info("[SHUTDOWN] Store closed")
+
+# --------------------------------------------------
+# APP INIT
+# --------------------------------------------------
+app = FastAPI(title="Unified Backend", lifespan=lifespan)
+
+# Note: CORS Middleware is removed here because the Gateway (8081) handles it.
 
 
-app = FastAPI(
-    title="LangGraph Unified Backend",
-    lifespan=lifespan,
-)
 
 
-origins = [
-    "http://localhost:4200",
-    "http://localhost:8000",
-    "http://localhost:8081",
-]
+# --------------------------------------------------
+# AUTH HELPERS
+# --------------------------------------------------
+def extract_user_context(req: Request) -> Optional[Dict[str, Any]]:
+    # 1. Check for headers injected by Lua Gateway (Primary)
+    user_id = req.headers.get("X-User-Id")
+    if user_id:
+        roles_raw = req.headers.get("X-User-Roles", "")
+        scope_raw = req.headers.get("X-User-Scope", "")
+        return {
+            "user_id": user_id,
+            "username": req.headers.get("X-Username"),
+            "roles": roles_raw.split(",") if roles_raw else [],
+            "scope": scope_raw.split(" ") if scope_raw else [],
+        }
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=origins,
-    allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
-    allow_headers=["*"],
-    expose_headers=["*"],
-    max_age=3600,
-)
-
-
-GATEWAY_URL = "http://localhost:8081"
-
-
-class ChatRequest(BaseModel):
-    message: str
-    thread_id: str = "default"
-
-def normalize_user_context(payload: Dict[str, Any]) -> Dict[str, Any]:
-    """Normalizes role and scope from JWT payload into lists."""
-
-    # Normalize scope
-    scope = payload.get("scope", [])
-    if isinstance(scope, str):
-        scope = scope.split(" ")
-
-    # Normalize roles
-    roles = payload.get("roles", [])
-
-    # Handle Keycloak client roles
-    client_roles = payload.get("resource_access", {}).get("public-client", {}).get("roles", [])
-    if client_roles:
-        roles.extend(client_roles)
-
-    # Handle single role field
-    single_role = payload.get("role")
-    if single_role:
-        roles.append(single_role)
-
-    roles = list(set(roles))
-
-    return {
-        "user_id": payload.get("sub", "anonymous"),
-        "roles": roles,
-        "scope": scope,
-        "username": payload.get("preferred_username"),
-    }
-
-
-def extract_user_context_from_request(
-    req: Request,
-) -> Optional[Dict[str, Any]]:
-    """Extract and normalize user context from cookies or Authorization header."""
-
+    # 2. Fallback to manual JWT decode if headers missing (Secondary)
     token = req.cookies.get("access_token")
-    logger.debug(
-        f"[AUTH] Token from cookies: {'FOUND' if token else 'NOT FOUND'}"
-    )
-
     if not token:
-        auth_header = req.headers.get("Authorization")
-        logger.debug(
-            f"[AUTH] Authorization header: {'FOUND' if auth_header else 'NOT FOUND'}"
-        )
-        if auth_header and auth_header.startswith("Bearer "):
-            token = auth_header.split(" ")[1]
-            logger.debug("[AUTH] Token extracted from Bearer header")
-
-    if not token:
-        logger.warning("[AUTH] No token found in cookies or headers")
         return None
 
     try:
         payload = jwt.decode(token, options={"verify_signature": False})
-
-        logger.debug(f"[AUTH] JWT payload keys: {list(payload.keys())}")
-        logger.debug(f"[AUTH] JWT roles: {payload.get('roles')}")
-        logger.debug(
-            f"[AUTH] JWT resource_access: {payload.get('resource_access')}"
-        )
-
-        context = normalize_user_context(payload)
-
-        logger.info(
-            f"[AUTH] Extracted user context: "
-            f"user_id={context.get('user_id')}, roles={context.get('roles')}"
-        )
-
-        return context
-
+        roles = payload.get("resource_access", {}).get("public-client", {}).get("roles", [])
+        return {
+            "user_id": payload.get("sub"),
+            "username": payload.get("preferred_username"),
+            "roles": roles,
+            "scope": payload.get("scope", "").split(" "),
+        }
     except Exception as e:
-        logger.error(f"[AUTH] Failed to decode token: {e}")
+        logger.error("[AUTH] Token decode failed: %s", e)
         return None
 
-
-# Authentication Proxy Routes (Forward to Auth Gateway)
-@app.get("/api/auth/login")
-async def login():
-    """Proxy login request to auth gateway."""
-    async with httpx.AsyncClient() as client:
-        try:
-            response = await client.get(
-                "http://localhost:8000/api/auth/login",
-                follow_redirects=False
-            )
-            return RedirectResponse(url=response.headers.get("location", "http://localhost:4200/login-callback"))
-        except Exception as e:
-            logger.error(f"[AUTH] Login proxy error: {e}")
-            raise HTTPException(status_code=502, detail="Auth gateway unavailable")
-
-
-@app.get("/api/auth/logout")
-async def logout():
-    """Proxy logout request to auth gateway."""
-    async with httpx.AsyncClient() as client:
-        try:
-            response = await client.get(
-                "http://localhost:8000/api/auth/logout",
-                follow_redirects=False
-            )
-            redirect = RedirectResponse(url=response.headers.get("location", "http://localhost:4200"))
-            redirect.delete_cookie("access_token", path="/")
-            return redirect
-        except Exception as e:
-            logger.error(f"[AUTH] Logout proxy error: {e}")
-            raise HTTPException(status_code=502, detail="Auth gateway unavailable")
-
-
-@app.get("/api/auth/callback")
-async def callback(code: str = None):
-    """Proxy callback request to auth gateway."""
-    async with httpx.AsyncClient() as client:
-        try:
-            params = {"code": code} if code else {}
-            response = await client.get(
-                "http://localhost:8000/api/auth/callback",
-                params=params,
-                follow_redirects=False
-            )
-            
-            # Get the redirect URL from the gateway
-            redirect_url = response.headers.get("location", "http://localhost:4200/login-callback")
-            redirect = RedirectResponse(url=redirect_url)
-            
-            # Forward set-cookie headers from gateway
-            if "set-cookie" in response.headers:
-                redirect.headers["set-cookie"] = response.headers["set-cookie"]
-            
-            return redirect
-        except Exception as e:
-            logger.error(f"[AUTH] Callback proxy error: {e}")
-            raise HTTPException(status_code=502, detail="Auth gateway unavailable")
-
-
+# --------------------------------------------------
+# ROUTES
+# --------------------------------------------------
 @app.get("/api/auth/me")
-async def me(request: Request):
-    """Proxy /me request to auth gateway for authenticated user info."""
-    async with httpx.AsyncClient() as client:
-        try:
-            headers = {"Cookie": request.headers.get("cookie", "")}
-            response = await client.get(
-                "http://localhost:8000/api/auth/me",
-                headers=headers
-            )
-            return response.json()
-        except Exception as e:
-            logger.error(f"[AUTH] Me proxy error: {e}")
-            return {
-                "authenticated": False,
-                "scope": "General",
-                "user_id": "anonymous",
-                "roles": [],
-            }
+async def me(req: Request):
+    user = extract_user_context(req)
+    if not user:
+        return {"authenticated": False}
+    return {"authenticated": True, **user}
+
+async def stream_generator(input_message, thread_id, user_context, req):
+    graph = req.app.state.graph
+    input_state = {"messages": [HumanMessage(content=input_message)]}
+    config = {"configurable": {"thread_id": thread_id, "user": user_context}}
+
+    final_text = ""
+
+    async for event in graph.astream_events(
+        input_state, config=config, version="v1"
+    ):
+        # ONLY collect final output, do NOT stream router tokens
+        if event["event"] == "on_chain_end":
+            output = event["data"].get("output")
+
+            if isinstance(output, dict) and "messages" in output:
+                for msg in reversed(output["messages"]):
+                    if msg.type == "ai":
+                        content = msg.content
+
+                        # LangChain block handling
+                        if isinstance(content, list):
+                            text = ""
+                            for block in content:
+                                if (
+                                    isinstance(block, dict)
+                                    and block.get("type") == "text"
+                                ):
+                                    text += block.get("text", "")
+                            final_text = text
+                        else:
+                            final_text = content
+                        break
+
+    # Send ONLY the final agent response
+    if final_text:
+        yield json.dumps({
+            "type": "message",
+            "content": final_text
+        }) + "\n"
 
 
-async def stream_generator(
-    input_message: str,
-    thread_id: str,
-    user_context: Dict[str, Any],
-    req: Request,
-):
-    """Run the LangGraph router and stream events to the client."""
-
-    from langchain_core.messages import HumanMessage
-
-    input_state = {
-        "messages": [HumanMessage(content=input_message)]
-    }
-
-    config = {
-        "configurable": {
-            "thread_id": thread_id,
-            "user": user_context,
-        }
-    }
-
-    announced_agents = set()
-
-    try:
-        async for event in req.app.state.graph.astream_events(
-            input_state,
-            config=config,
-            version="v1",
-        ):
-            kind = event["event"]
-            metadata = event.get("metadata", {})
-            node_name = metadata.get("langgraph_node", "")
-
-            # Ignore router classification output
-            if node_name == "classify_query":
-                continue
-
-            # Stream model tokens
-            if kind == "on_chat_model_stream":
-                content = event["data"]["chunk"].content
-
-                if isinstance(content, list):
-                    text_content = ""
-                    for block in content:
-                        if isinstance(block, dict) and block.get("type") == "text":
-                            text_content += block.get("text", "")
-                        elif isinstance(block, str):
-                            text_content += block
-                    content = text_content
-
-                if content:
-                    yield json.dumps(
-                        {"type": "message", "content": content}
-                    ) + "\n"
-
-            # Announce agent entry
-            elif (
-                kind == "on_chain_start"
-                and node_name in ["mcp_agent", "order_agent", "nav_agent"]
-            ):
-                agent_map = {
-                    "mcp_agent": "General Agent",
-                    "order_agent": "Order Agent",
-                    "nav_agent": "NAV Agent",
-                }
-
-                if node_name not in announced_agents:
-                    announced_agents.add(node_name)
-                    friendly = agent_map.get(node_name, node_name)
-                    yield json.dumps(
-                        {
-                            "type": "message",
-                            "content": f"\n\n**Using {friendly}**...\n\n",
-                        }
-                    ) + "\n"
-
-    except Exception as e:
-        logger.error(f"[STREAM] Streaming error: {e}")
-        yield json.dumps(
-            {"type": "error", "content": str(e)}
-        ) + "\n"
 
 @app.post("/api/chat")
 async def chat(request: ChatRequest, req: Request):
-    """Chat endpoint – invokes LangGraph agent with auth + memory."""
+    user_context = extract_user_context(req)
 
-    user_context = extract_user_context_from_request(req)
-
-    # DEV fallback (AUTH BRANCH – UNCHANGED)
+    # Use default context for local testing if auth fails
     if not user_context:
-        logger.warning(
-            "[CHAT] No user context extracted! Using DEV fallback with admin role"
-        )
         user_context = {
-            "user_id": "test_user",
+            "user_id": "dev",
+            "username": "dev",
             "roles": ["admin"],
-            "scope": [
-                "mcp-agent",
-                "order-agent",
-                "nav-agent",
-                "router-agent",
-                "mutual funds",
-            ],
+            "scope": ["mcp-agent", "router-agent"],
         }
-    else:
-        logger.info(
-            f"[CHAT] User context extracted: "
-            f"user_id={user_context.get('user_id')}, "
-            f"roles={user_context.get('roles')}"
-        )
 
     return StreamingResponse(
-        stream_generator(
-            request.message,
-            request.thread_id,
-            user_context,
-            req,
-        ),
+        stream_generator(request.message, request.thread_id, user_context, req),
         media_type="application/x-ndjson",
+        headers={"Cache-Control": "no-cache", "Connection": "keep-alive"}
     )
+
+
+# ... (at the top of the file)
+def extract_user_context(req: Request) -> Optional[Dict[str, Any]]:
+    user_id = req.headers.get("X-User-Id")
+    if user_id:
+        return {
+            "user_id": user_id,
+            "username": req.headers.get("X-Username"),
+            "roles": req.headers.get("X-User-Roles", "").split(",") if req.headers.get("X-User-Roles") else [],
+            "scope": req.headers.get("X-User-Scope", "").split(" ") if req.headers.get("X-User-Scope") else [],
+        }
+    return None
 
 
 
@@ -396,8 +208,8 @@ async def upload_file(
 ):
     """Handle file uploads, save locally, and trigger agent processing."""
 
+    user_context = extract_user_context(req)
 
-    user_context = extract_user_context_from_request(req)
 
     if not user_context:
         logger.warning(
@@ -423,17 +235,23 @@ async def upload_file(
         )
 
 
+
+
     try:
         upload_dir = Path("uploads")
         upload_dir.mkdir(exist_ok=True)
 
+
         file_path = upload_dir / file.filename
+
 
         content = await file.read()
         with open(file_path, "wb") as f:
             f.write(content)
 
+
         logger.info(f"[UPLOAD] File saved to: {file_path.absolute()}")
+
 
     except Exception as e:
         logger.error(f"[UPLOAD] File save error: {e}")
@@ -443,7 +261,10 @@ async def upload_file(
         )
 
 
+
+
     from langchain_core.messages import HumanMessage
+
 
     abs_path = str(file_path.absolute())
     msg_content = (
@@ -453,9 +274,11 @@ async def upload_file(
         f"Please process this file."
     )
 
+
     input_state = {
         "messages": [HumanMessage(content=msg_content)]
     }
+
 
     config = {
         "configurable": {
@@ -464,18 +287,22 @@ async def upload_file(
         }
     }
 
+
     try:
         result = await req.app.state.graph.ainvoke(
             input_state,
             config=config,
         )
 
+
         agent_response = "File processed."
+
 
         if "messages" in result and result["messages"]:
             for msg in reversed(result["messages"]):
                 if msg.type == "ai":
                     agent_response = msg.content
+
 
                     if isinstance(agent_response, list):
                         text_content = ""
@@ -490,7 +317,9 @@ async def upload_file(
                         agent_response = text_content
                     break
 
+
         return {"agent_response": agent_response}
+
 
     except Exception as e:
         logger.error(f"[UPLOAD] Agent processing error: {e}")
@@ -499,11 +328,56 @@ async def upload_file(
         }
 
 
+@app.post("/api/chat")
+async def chat(request: ChatRequest, req: Request):
+    """Chat endpoint – invokes LangGraph agent with auth + memory."""
 
+
+    user_context = extract_user_context(req)
+
+
+    # DEV fallback (AUTH BRANCH – UNCHANGED)
+    if not user_context:
+        logger.warning(
+            "[CHAT] No user context extracted! Using DEV fallback with admin role"
+        )
+        user_context = {
+            "user_id": "test_user",
+            "roles": ["admin"],
+            "scope": [
+                "mcp-agent",
+                "order-agent",
+                "nav-agent",
+                "router-agent",
+                "mutual funds",
+            ],
+        }
+    else:
+        logger.info(
+            f"[CHAT] User context extracted: "
+            f"user_id={user_context.get('user_id')}, "
+            f"roles={user_context.get('roles')}"
+        )
+
+
+    return StreamingResponse(
+        stream_generator(
+            request.message,
+            request.thread_id,
+            user_context,
+            req,
+        ),
+        media_type="application/x-ndjson",
+    )
+
+
+# --------------------------------------------------
+# RUN (Port 8280)
+# --------------------------------------------------
 if __name__ == "__main__":
     uvicorn.run(
-        "src.app_server:app",
-        host="0.0.0.0",
-        port=8081,
-        reload=True,
+        "app_server:app", 
+        host="0.0.0.0", 
+        port=8060, 
+        reload=True
     )
