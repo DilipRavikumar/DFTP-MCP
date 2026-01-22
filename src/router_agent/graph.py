@@ -38,7 +38,6 @@ logger = logging.getLogger(__name__)
 logger.setLevel(os.getenv("AGENT_LOG_LEVEL", "INFO"))
 
 
-
 class UserContext(TypedDict, total=False):
     """User context propagated from auth layer (Keycloak/JWT)."""
 

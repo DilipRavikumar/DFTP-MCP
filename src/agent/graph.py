@@ -135,30 +135,22 @@ async def _get_mcp_tools(user_context: UserContext) -> list[Any]:
 
     user_scope = user_context.get("scope", [])
     all_tools = []
-    seen_tool_names = set()  # Track tool names to avoid duplicates
+    seen_tool_names = set()  
 
     for server_name, server_config in servers.items():
-        # Authorization: ALLOW ALL for now (User request)
-        # if server_name not in user_scope:
-        #     logger.debug(f"User not authorized for server: {server_name}")
-        #     continue
-
         logger.info(f"DEBUG: Attempting to connect to MCP server '{server_name}' at {server_config.get('url')}")
         
         try:
             mcp_config = {
                 server_name: {
-                "transport": server_config["transport"],  # Pass transport (e.g., 'http', 'sse')
+                "transport": server_config["transport"],  
                 "url": server_config["url"],
             }
             }
 
-            # MultiServerMCPClient is not a context manager in 0.1.0+
             client = MultiServerMCPClient(mcp_config)
-            # Add timeout to get_tools if possible, or just await
-            tools = await client.get_tools() # get_tools() gets from all configured servers in the client
+            tools = await client.get_tools() 
             
-            # Deduplicate tools - keep first occurrence only
             unique_tools = []
             for tool in tools:
                 tool_name = tool.name
@@ -218,19 +210,8 @@ async def call_model(
         from langchain_core.messages import AIMessage
 
         user_context = config.get("configurable", {}).get("user", {})
-        # if not user_context:
-        #     logger.warning("No user context found. Using default 'test_user' for development.")
-        #     user_context = {
-        #         "user_id": "test_user",
-        #         "roles": ["admin"],
-        #         "scope": ["mcp-agent", "order-agent", "nav-agent", "router-agent"]
-        #     }
-            # raise ValueError("User context is required in config")
-
-        # Initialize MCP tools based on user authorization
         mcp_tools = await _get_mcp_tools(user_context)
 
-        # Final deduplication before binding - ensure NO duplicate tool names
         final_tools = {}
         for tool in mcp_tools:
             if tool.name not in final_tools:
@@ -241,8 +222,6 @@ async def call_model(
         mcp_tools = list(final_tools.values())
         logger.info(f"Final tool count after deduplication: {len(mcp_tools)}")
 
-        # Initialize Bedrock model with tools
-        # Pass system prompt via model_kwargs for Claude 3 on Bedrock
         model = ChatBedrock(
             model_id=os.getenv(
                 "BEDROCK_MODEL_ID",
@@ -256,16 +235,13 @@ async def call_model(
 
         model_with_tools = model.bind_tools(mcp_tools)
 
-        # Prepare messages - do NOT include SystemMessage in the list
         messages_to_send = state["messages"]
         
-        # Log message types for debugging
         message_types = [type(m).__name__ for m in messages_to_send]
         logger.info(f"Sending messages types: {message_types}")
         if messages_to_send:
             logger.info(f"First message content: {messages_to_send[0].content[:50]}...")
 
-        # Invoke the model
         response = model_with_tools.invoke(messages_to_send)
 
         logger.info(
@@ -296,11 +272,8 @@ def _should_continue(state: AgentState) -> str:
     messages = state["messages"]
     last_message = messages[-1]
 
-    # If the LLM made tool calls, route to tool handler
     if hasattr(last_message, "tool_calls") and last_message.tool_calls:
         return "handle_tool_calls"
-
-    # Otherwise, end the conversation
     return END
 
 
@@ -320,14 +293,6 @@ async def handle_tool_calls(
     messages = state["messages"]
     last_message = messages[-1]
     user_context = config.get("configurable", {}).get("user", {})
-    # if not user_context:
-    #      # Fallback for dev
-    #      user_context = {
-    #         "user_id": "test_user",
-    #         "roles": ["admin"],
-    #         "scope": ["mcp-agent", "order-agent", "nav-agent", "router-agent"]
-    #     }
-
     if not hasattr(last_message, "tool_calls"):
         return {"messages": []}
 
@@ -350,7 +315,6 @@ async def handle_tool_calls(
 
             # Check if this is a write operation requiring approval
             if _is_write_operation(tool_name):
-                # Request human approval for write operations
                 approval_response = interrupt(
                     {
                         "action": tool_name,
@@ -362,13 +326,10 @@ async def handle_tool_calls(
                     }
                 )
 
-                # If the response is a Command with resume, continue
-                # Otherwise wait for human input
                 if isinstance(approval_response, Command):
                     if approval_response.resume and approval_response.resume.get(
                         "type"
                     ) in ["approve", "edit"]:
-                        # Use edited args if provided
                         if approval_response.resume.get("args"):
                             tool_args = approval_response.resume["args"]
                         logger.info(
@@ -376,7 +337,6 @@ async def handle_tool_calls(
                             f"(user: {user_context.get('user_id')})"
                         )
                     else:
-                        # Operation rejected
                         logger.info(
                             f"Write operation rejected: {tool_name} "
                             f"(user: {user_context.get('user_id')})"
@@ -389,7 +349,6 @@ async def handle_tool_calls(
                         )
                         continue
 
-            # Execute the tool
             if tool_name in tools_by_name:
                 tool = tools_by_name[tool_name]
                 try:
@@ -472,8 +431,6 @@ async def create_agent_graph() -> StateGraph:
     Returns:
         Compiled LangGraph StateGraph with PostgreSQL persistence
     """
-    # Initialize checkpointer
-    # checkpointer = await initialize_checkpointer()
 
     # Create state graph
     graph = StateGraph(AgentState, config_schema=Context)
@@ -503,7 +460,7 @@ async def create_agent_graph() -> StateGraph:
     return compiled_graph
 
 
-# Graph instance (lazy initialization)
+# Graph instance
 _graph_instance = None
 
 
@@ -515,7 +472,6 @@ async def get_graph():
     return _graph_instance
 
 
-# For direct module access - will be None if in async context
 graph = None
 
 try:
