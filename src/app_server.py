@@ -165,40 +165,6 @@ async def stream_generator(input_message, thread_id, user_context, req):
 
 
 
-@app.post("/api/chat")
-async def chat(request: ChatRequest, req: Request):
-    user_context = extract_user_context(req)
-
-    # Use default context for local testing if auth fails
-    if not user_context:
-        user_context = {
-            "user_id": "dev",
-            "username": "dev",
-            "roles": ["admin"],
-            "scope": ["mcp-agent", "router-agent"],
-        }
-
-    return StreamingResponse(
-        stream_generator(request.message, request.thread_id, user_context, req),
-        media_type="application/x-ndjson",
-        headers={"Cache-Control": "no-cache", "Connection": "keep-alive"}
-    )
-
-
-# ... (at the top of the file)
-def extract_user_context(req: Request) -> Optional[Dict[str, Any]]:
-    user_id = req.headers.get("X-User-Id")
-    if user_id:
-        return {
-            "user_id": user_id,
-            "username": req.headers.get("X-Username"),
-            "roles": req.headers.get("X-User-Roles", "").split(",") if req.headers.get("X-User-Roles") else [],
-            "scope": req.headers.get("X-User-Scope", "").split(" ") if req.headers.get("X-User-Scope") else [],
-        }
-    return None
-
-
-
 @app.post("/api/upload")
 async def upload_file(
     req: Request,
@@ -234,9 +200,6 @@ async def upload_file(
             f"roles={user_context.get('roles')}"
         )
 
-
-
-
     try:
         upload_dir = Path("uploads")
         upload_dir.mkdir(exist_ok=True)
@@ -259,8 +222,6 @@ async def upload_file(
             status_code=500,
             detail=f"Failed to save file: {e}",
         )
-
-
 
 
     from langchain_core.messages import HumanMessage
@@ -371,9 +332,6 @@ async def chat(request: ChatRequest, req: Request):
     )
 
 
-# --------------------------------------------------
-# RUN (Port 8280)
-# --------------------------------------------------
 if __name__ == "__main__":
     uvicorn.run(
         "app_server:app", 
