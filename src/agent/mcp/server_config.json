@@ -1,8 +1,8 @@
 {
   "servers": [
     {
-      "spec_link": "http://localhost:9095/v3/api-docs",
-      "base_url": "http://localhost:9095",
+      "spec_link": "http://localhost:9091/v3/api-docs",
+      "base_url": "http://localhost:9091",
       "server_name": "Status Tracking MCP Server"
     },
     {
@@ -14,6 +14,16 @@
       "spec_link": "http://localhost:8084/v3/api-docs",
       "base_url": "http://localhost:8084",
       "server_name": "Valuation MCP Server"
+    },
+    {
+      "spec_link": "http://localhost:8086/v3/api-docs",
+      "base_url": "http://localhost:8086",
+      "server_name": "Cano MCP Server"
+    },
+     {
+      "spec_link": "http://localhost:9090/v3/api-docs",
+      "base_url": "http://localhost:9090",
+      "server_name": "Netting MCP Server"
     }
   ]
 }
