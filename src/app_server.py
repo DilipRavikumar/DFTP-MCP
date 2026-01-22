@@ -23,29 +23,19 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 import sys
 
-# Ensure local source modules are findable
 sys.path.append(str(Path(__file__).parent.parent))
 
 from langchain_core.messages import HumanMessage
 from src.router_agent.graph import create_router_graph
 from langgraph.store.postgres import PostgresStore
 
-# --------------------------------------------------
-# LOGGING
-# --------------------------------------------------
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("APP_SERVER")
 
-# --------------------------------------------------
-# MODELS (The missing piece)
-# --------------------------------------------------
 class ChatRequest(BaseModel):
     message: str
     thread_id: str = "default"
 
-# --------------------------------------------------
-# FASTAPI LIFESPAN
-# --------------------------------------------------
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     db_uri = os.getenv(
@@ -69,21 +59,10 @@ async def lifespan(app: FastAPI):
             store_cm.__exit__(None, None, None)
             logger.info("[SHUTDOWN] Store closed")
 
-# --------------------------------------------------
-# APP INIT
-# --------------------------------------------------
+
 app = FastAPI(title="Unified Backend", lifespan=lifespan)
 
-# Note: CORS Middleware is removed here because the Gateway (8081) handles it.
-
-
-
-
-# --------------------------------------------------
-# AUTH HELPERS
-# --------------------------------------------------
 def extract_user_context(req: Request) -> Optional[Dict[str, Any]]:
-    # 1. Check for headers injected by Lua Gateway (Primary)
     user_id = req.headers.get("X-User-Id")
     if user_id:
         roles_raw = req.headers.get("X-User-Roles", "")
@@ -95,7 +74,6 @@ def extract_user_context(req: Request) -> Optional[Dict[str, Any]]:
             "scope": scope_raw.split(" ") if scope_raw else [],
         }
 
-    # 2. Fallback to manual JWT decode if headers missing (Secondary)
     token = req.cookies.get("access_token")
     if not token:
         return None
@@ -113,9 +91,7 @@ def extract_user_context(req: Request) -> Optional[Dict[str, Any]]:
         logger.error("[AUTH] Token decode failed: %s", e)
         return None
 
-# --------------------------------------------------
-# ROUTES
-# --------------------------------------------------
+
 @app.get("/api/auth/me")
 async def me(req: Request):
     user = extract_user_context(req)
@@ -133,7 +109,6 @@ async def stream_generator(input_message, thread_id, user_context, req):
     async for event in graph.astream_events(
         input_state, config=config, version="v1"
     ):
-        # ONLY collect final output, do NOT stream router tokens
         if event["event"] == "on_chain_end":
             output = event["data"].get("output")
 
@@ -142,7 +117,6 @@ async def stream_generator(input_message, thread_id, user_context, req):
                     if msg.type == "ai":
                         content = msg.content
 
-                        # LangChain block handling
                         if isinstance(content, list):
                             text = ""
                             for block in content:
@@ -156,7 +130,6 @@ async def stream_generator(input_message, thread_id, user_context, req):
                             final_text = content
                         break
 
-    # Send ONLY the final agent response
     if final_text:
         yield json.dumps({
             "type": "message",
@@ -255,9 +228,7 @@ async def upload_file(
             config=config,
         )
 
-
         agent_response = "File processed."
-
 
         if "messages" in result and result["messages"]:
             for msg in reversed(result["messages"]):
@@ -293,11 +264,8 @@ async def upload_file(
 async def chat(request: ChatRequest, req: Request):
     """Chat endpoint – invokes LangGraph agent with auth + memory."""
 
-
     user_context = extract_user_context(req)
 
-
-    # DEV fallback (AUTH BRANCH – UNCHANGED)
     if not user_context:
         logger.warning(
             "[CHAT] No user context extracted! Using DEV fallback with admin role"

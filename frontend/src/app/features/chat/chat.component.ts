@@ -152,8 +152,6 @@ export class ChatComponent {
   newMessage = '';
   isTyping = signal(false);
   uploadingFile = signal<string | null>(null);
-
-  // New state for file staging
   selectedFile = signal<File | null>(null);
   fileDescription = '';
 
@@ -202,7 +200,6 @@ export class ChatComponent {
 
       for await (const chunk of this.chatService.streamChat(userMsg, this.threadId())) {
         assistantMsg += chunk;
-        // Update the last message
         this.messages.update(msgs => {
           const newMsgs = [...msgs];
           newMsgs[newMsgs.length - 1] = { role: 'assistant', content: assistantMsg };
@@ -226,13 +223,8 @@ export class ChatComponent {
   onFileSelected(event: any) {
     const file = event.target.files[0];
     if (!file) return;
-
-    // Stage the file instead of uploading immediately
     this.selectedFile.set(file);
-    this.fileDescription = ''; // Reset description
-
-    // Reset input so validation triggers if same file selected again? 
-    // Usually good practice but 'event.target.value = ""' 
+    this.fileDescription = ''; 
     event.target.value = '';
   }
 
@@ -246,7 +238,6 @@ export class ChatComponent {
     if (!file) return;
 
     this.uploadingFile.set(file.name);
-    // User message showing file + description
     const displayMsg = `📤 Uploaded file: **${file.name}**\n\n> ${this.fileDescription}`;
 
     this.chatService.uploadFile(file, this.threadId(), this.fileDescription).subscribe({
@@ -263,14 +254,12 @@ export class ChatComponent {
           }]);
         }
         this.uploadingFile.set(null);
-        this.selectedFile.set(null); // Clear staging
+        this.selectedFile.set(null);
         this.fileDescription = '';
       },
       error: (err) => {
         alert('Upload failed: ' + err.message);
         this.uploadingFile.set(null);
-        // Keep staging open on error so they can retry? Or close it?
-        // Let's keep it open or just log error.
       }
     });
   }
