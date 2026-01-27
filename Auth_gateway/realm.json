@@ -1,0 +1,102 @@
+{
+  "realm": "authentication",
+  "enabled": true,
+
+  "clients": [
+    {
+      "clientId": "public-client",
+      "name": "Angular Public Client",
+      "enabled": true,
+      "publicClient": true,
+      "protocol": "openid-connect",
+
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": true,
+      "implicitFlowEnabled": false,
+
+      "redirectUris": [
+        "http://localhost:8081/api/auth/callback",
+        "http://localhost:4200/*"
+      ],
+
+      "webOrigins": [
+        "http://localhost:4200"
+      ],
+
+      "frontchannelLogout": true,
+
+        "attributes": {
+        "post.logout.redirect.uris": "http://localhost:8081/api/auth/post-logout"
+    },
+
+      "defaultClientScopes": [
+        "profile",
+        "MutualFunds"
+      ],
+
+      "optionalClientScopes": [
+        "email"
+      ]
+    }
+  ],
+
+  "clientScopes": [
+    {
+      "name": "MutualFunds",
+      "description": "Mutual Funds access scope",
+      "protocol": "openid-connect",
+      "attributes": {
+        "include.in.token.scope": "true",
+        "display.on.consent.screen": "true"
+      },
+      "protocolMappers": []
+    }
+  ],
+
+  "roles": {
+    "client": {
+      "public-client": [
+        {
+          "name": "distributor",
+          "description": "Distributor role"
+        },
+        {
+          "name": "fundhouse",
+          "description": "Fundhouse role"
+        },
+        {
+          "name": "admin",
+          "description": "Admin role"
+        }
+      ]
+    }
+  },
+
+  "users": [
+    {
+      "username": "kalyan",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "kalyan@gmail.com",
+      "firstName": "kalyan",
+      "lastName": "kalyan",
+      "createdTimestamp": 1769239149000,
+
+      "credentials": [
+        {
+          "type": "password",
+          "value": "kalyan",
+          "temporary": false
+        }
+      ],
+
+      "clientRoles": {
+        "public-client": [
+          "distributor",
+          "fundhouse",
+          "admin"
+        ]
+      }
+    }
+  ]
+}
