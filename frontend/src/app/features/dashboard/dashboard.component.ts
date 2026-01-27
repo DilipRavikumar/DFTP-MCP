@@ -6,8 +6,8 @@ import { Router } from '@angular/router';
   template: `
     <div class="dashboard-container">
       <div class="hero-card">
-        <div class="icon">🤖</div>
-        <h1>MCP Agent Orchestrator</h1>
+        <div class="icon"></div>
+        <h1>DFTP-MCP</h1>
         <button (click)="login()" class="login-btn">
           Login to Dashboard
         </button>

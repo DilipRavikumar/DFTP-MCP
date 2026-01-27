@@ -74,24 +74,6 @@ def extract_user_context(req: Request) -> Optional[Dict[str, Any]]:
             "scope": scope_raw.split(" ") if scope_raw else [],
         }
 
-    token = req.cookies.get("access_token")
-    if not token:
-        return None
-
-    try:
-        payload = jwt.decode(token, options={"verify_signature": False})
-        roles = payload.get("resource_access", {}).get("public-client", {}).get("roles", [])
-        return {
-            "user_id": payload.get("sub"),
-            "username": payload.get("preferred_username"),
-            "roles": roles,
-            "scope": payload.get("scope", "").split(" "),
-        }
-    except Exception as e:
-        logger.error("[AUTH] Token decode failed: %s", e)
-        return None
-
-
 @app.get("/api/auth/me")
 async def me(req: Request):
     user = extract_user_context(req)
@@ -150,36 +132,11 @@ async def upload_file(
     user_context = extract_user_context(req)
 
 
-    if not user_context:
-        logger.warning(
-            "[UPLOAD] No user context extracted! Using DEV fallback with admin role"
-        )
-        user_context = {
-            "user_id": "test_user",
-            "username": "DevUser",
-            "roles": ["admin"],
-            "scope": [
-                "mutual funds",
-                "mcp-agent",
-                "order-agent",
-                "nav-agent",
-                "router-agent",
-            ],
-        }
-    else:
-        logger.info(
-            f"[UPLOAD] User context extracted: "
-            f"user_id={user_context.get('user_id')}, "
-            f"roles={user_context.get('roles')}"
-        )
-
     try:
         upload_dir = Path("uploads")
         upload_dir.mkdir(exist_ok=True)
 
-
         file_path = upload_dir / file.filename
-
 
         content = await file.read()
         with open(file_path, "wb") as f:
@@ -265,29 +222,6 @@ async def chat(request: ChatRequest, req: Request):
     """Chat endpoint – invokes LangGraph agent with auth + memory."""
 
     user_context = extract_user_context(req)
-
-    if not user_context:
-        logger.warning(
-            "[CHAT] No user context extracted! Using DEV fallback with admin role"
-        )
-        user_context = {
-            "user_id": "test_user",
-            "roles": ["admin"],
-            "scope": [
-                "mcp-agent",
-                "order-agent",
-                "nav-agent",
-                "router-agent",
-                "mutual funds",
-            ],
-        }
-    else:
-        logger.info(
-            f"[CHAT] User context extracted: "
-            f"user_id={user_context.get('user_id')}, "
-            f"roles={user_context.get('roles')}"
-        )
-
 
     return StreamingResponse(
         stream_generator(

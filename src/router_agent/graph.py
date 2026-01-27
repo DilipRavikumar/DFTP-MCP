@@ -228,19 +228,6 @@ async def classify_query(
 
         logger.info(f"[ROUTER] User context received: {user_context}")
 
-        if not user_context:
-            logger.warning("[ROUTER] No user context found. Using fallback admin user.")
-            user_context = {
-                "user_id": "test_user",
-                "roles": ["admin"],
-                "scope": [
-                    "mcp-agent",
-                    "order-agent",
-                    "nav-agent",
-                    "router-agent",
-                ],
-            }
-
         messages = state.get("messages", [])
         logger.info(f"[ROUTER] Total messages in state: {len(messages)}")
 
@@ -640,9 +627,7 @@ async def create_router_graph(
     mcp → END
     """
 
-    logger.info("==============================================================")
     logger.info("[ROUTER] Initializing Router Graph")
-    logger.info("==============================================================")
 
     if store is None:
         from langgraph.store.memory import InMemoryStore

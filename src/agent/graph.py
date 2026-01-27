@@ -32,7 +32,6 @@ logger.setLevel(os.getenv("AGENT_LOG_LEVEL", "INFO"))
 class UserContext(TypedDict, total=False):
     """User context for authorization.
 
-    See: https://langchain-ai.github.io/langgraph/cloud/how-tos/auth/
     """
 
     user_id: str
@@ -45,7 +44,6 @@ class Context(TypedDict):
     """Context parameters for the agent.
 
     Set these when creating assistants OR when invoking the graph.
-    See: https://langchain-ai.github.io/langgraph/cloud/how-tos/configuration_cloud/
     """
 
     thread_id: str
@@ -56,7 +54,6 @@ class AgentState(TypedDict):
     """State schema for the MCP agent.
 
     Follows the MessagesState pattern for chat-based agents.
-    See: https://langchain-ai.github.io/langgraph/concepts/agentic-agents/
     """
 
     messages: Annotated[list[BaseMessage], add_messages]
@@ -319,7 +316,7 @@ async def handle_tool_calls(
                     {
                         "action": tool_name,
                         "args": tool_args,
-                        "description": f"🔒 Write Operation Approval Required\n\n"
+                        "description": f"Write Operation Approval Required\n\n"
                         f"Tool: {tool_name}\n"
                         f"Arguments: {tool_args}\n\n"
                         f"Please review and approve this operation before proceeding.",

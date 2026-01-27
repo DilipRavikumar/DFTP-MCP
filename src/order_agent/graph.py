@@ -33,7 +33,6 @@ logger.setLevel(os.getenv("AGENT_LOG_LEVEL", "INFO"))
 class UserContext(TypedDict, total=False):
     """User context for authorization.
 
-    See: https://langchain-ai.github.io/langgraph/cloud/how-tos/auth/
     """
 
     user_id: str
@@ -46,7 +45,6 @@ class Context(TypedDict):
     """Context parameters for the agent.
 
     Set these when creating assistants OR when invoking the graph.
-    See: https://langchain-ai.github.io/langgraph/cloud/how-tos/configuration_cloud/
     """
 
     thread_id: str
@@ -57,7 +55,6 @@ class AgentState(TypedDict):
     """State schema for the order agent.
 
     Follows the MessagesState pattern for chat-based agents.
-    See: https://langchain-ai.github.io/langgraph/concepts/agentic-agents/
     """
 
     messages: Annotated[list[BaseMessage], add_messages]
@@ -190,12 +187,8 @@ async def _get_tools(user_context: UserContext) -> list[Any]:
         return []
 
     for server_name, server_config in servers.items():
-        # Authorization: Only load tools from servers in user scope 
-        # (This is legacy scope check for specific servers, we can keep or relax it)
         if server_name not in user_scope and "admin" not in user_roles:
-             # Relaxing this since "mutual funds" is the main gatekeeper now
-             # logger.debug(f"User not authorized for server: {server_name}")
-             # continue
+             
              pass
 
         try:
@@ -255,15 +248,6 @@ async def call_model(
         from langchain_core.messages import AIMessage
 
         user_context = config.get("configurable", {}).get("user", {})
-        # if not user_context:
-        #     logger.warning("No user context found. Using default 'test_user' for development.")
-        #     user_context = {
-        #         "user_id": "test_user",
-        #         "role": "admin",
-        #         "scope": ["mcp-agent", "order-agent", "nav-agent", "router-agent"]
-        #     }
-            # raise ValueError("User context is required in config")
-
         # Initialize tools based on user authorization
         tools_list = await _get_tools(user_context)
 
@@ -351,13 +335,6 @@ async def handle_tool_calls(
     messages = state["messages"]
     last_message = messages[-1]
     user_context = config.get("configurable", {}).get("user", {})
-    # if not user_context:
-    #      # Fallback for dev
-    #      user_context = {
-    #         "user_id": "test_user",
-    #         "roles": ["admin"],
-    #         "scope": ["mcp-agent", "order-agent", "nav-agent", "router-agent"]
-    #     }
 
     if not hasattr(last_message, "tool_calls"):
         return {"messages": []}
@@ -386,7 +363,7 @@ async def handle_tool_calls(
                     {
                         "action": tool_name,
                         "args": tool_args,
-                        "description": f"🔒 Write Operation Approval Required\n\n"
+                        "description": f"Write Operation Approval Required\n\n"
                         f"Tool: {tool_name}\n"
                         f"Arguments: {tool_args}\n\n"
                         f"Please review and approve this operation before proceeding.",
