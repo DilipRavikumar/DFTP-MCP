@@ -27,6 +27,9 @@
       "webOrigins": [
         "http://localhost:4200"
       ],
+      "attributes": {
+        "post.logout.redirect.uris": "http://localhost:8081/api/auth/post-logout"
+      },
       "defaultClientScopes": [
         "profile",
         "email",
