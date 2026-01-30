@@ -5,6 +5,7 @@ import jwt
 import uvicorn
 import httpx
 from dotenv import load_dotenv
+from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 
 load_dotenv()
 
@@ -24,7 +25,6 @@ from pathlib import Path
 import sys
 
 sys.path.append(str(Path(__file__).parent.parent))
-
 from langchain_core.messages import HumanMessage
 from src.router_agent.graph import create_router_graph
 from langgraph.store.postgres import PostgresStore
@@ -36,28 +36,51 @@ class ChatRequest(BaseModel):
     message: str
     thread_id: str = "default"
 
+from contextlib import asynccontextmanager
+
+from contextlib import asynccontextmanager
+from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+from langgraph.store.postgres import PostgresStore
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    db_uri = os.getenv(
-        "POSTGRES_URI",
-        "postgresql://postgres:root@localhost:5433/mcp_agent",
-    )
+    db_uri = "postgresql://postgres:root@localhost:5433/mcp_agent"
 
     store_cm = None
+    saver_cm = None
+    checkpointer = None
+
     try:
         logger.info("[BOOT] Initializing PostgresStore")
         store_cm = PostgresStore.from_conn_string(db_uri)
         store = store_cm.__enter__()
 
-        graph = await create_router_graph(store=store)
-        app.state.graph = graph
+        logger.info("[BOOT] Initializing AsyncPostgresSaver")
+        saver_cm = AsyncPostgresSaver.from_conn_string(db_uri)
 
-        logger.info("[BOOT] App ready")
+        # 🔑 ENTER CONTEXT → REAL SAVER
+        checkpointer = await saver_cm.__aenter__()
+
+        # 🔑 THIS IS MANDATORY (CREATES TABLES + CONSTRAINTS)
+        await checkpointer.setup()
+
+        logger.info("[BOOT] Building Router Graph")
+        graph = create_router_graph(
+            store=store,
+            checkpointer=checkpointer,
+        )
+
+        app.state.graph = graph
         yield
+
     finally:
+        logger.info("[SHUTDOWN] Closing resources")
+
+        if saver_cm:
+            await saver_cm.__aexit__(None, None, None)
+
         if store_cm:
             store_cm.__exit__(None, None, None)
-            logger.info("[SHUTDOWN] Store closed")
 
 
 app = FastAPI(title="Unified Backend", lifespan=lifespan)

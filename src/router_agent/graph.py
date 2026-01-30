@@ -63,6 +63,10 @@ class RouterState(TypedDict):
     order_result: Annotated[str, "Order agent result"]
     nav_result: Annotated[str, "NAV agent result"]
 
+from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+
+
+
 
 ROUTER_SYSTEM_PROMPT = """You are a query router agent. Your job is to classify user queries and route them to the appropriate specialized agents.
 
@@ -122,38 +126,36 @@ def _check_agent_access(user_context: UserContext, agent_name: str) -> tuple[boo
 
 
 
-def remember_user_context(
-    state: RouterState,
-    config: RunnableConfig,
-    *,
-    store: BaseStore,
-) -> dict[str, Any]:
-    """Persist user metadata for session continuity."""
+# def remember_user_context(
+#     state: RouterState,
+#     config: RunnableConfig,
+#     *,
+#     store: BaseStore,
+# ) -> dict[str, Any]:
+#     """Persist user metadata for session continuity."""
+#     try:
+#         user_context = config.get("configurable", {}).get("user", {})
+#         if not user_context or not user_context.get("user_id"):
+#             return {}
 
-    try:
-        user_context = config.get("configurable", {}).get("user", {})
-        if not user_context or not user_context.get("user_id"):
-            return {}
+#         user_id = user_context["user_id"]
+#         namespace = ("user", user_id, "context")
+#         store.put(
+#             namespace,
+#             "metadata",
+#             {
+#                 "roles": user_context.get("roles", []),
+#                 "scope": user_context.get("scope", []),
+#                 "username": user_context.get("username"),
+#             },
+#         )
 
-        user_id = user_context["user_id"]
-        namespace = ("user", user_id, "context")
+#         logger.debug(f"[MEMORY] Stored user context for {user_id}")
 
-        store.put(
-            namespace,
-            "metadata",
-            {
-                "roles": user_context.get("roles", []),
-                "scope": user_context.get("scope", []),
-                "username": user_context.get("username"),
-            },
-        )
+#     except Exception as e:
+#         logger.error(f"[MEMORY] Failed to store user context: {e}")
 
-        logger.debug(f"[MEMORY] Stored user context for {user_id}")
-
-    except Exception as e:
-        logger.error(f"[MEMORY] Failed to store user context: {e}")
-
-    return {}
+#     return {}
 
 
 def _save_agent_interaction(
@@ -312,7 +314,10 @@ async def invoke_order_agent(
 
         order_graph = await _load_subagent("order")
 
-        messages = state.get("messages", [])
+        messages = [
+    m for m in state.get("messages", [])
+    if isinstance(m, HumanMessage)
+]
         order_state = {"messages": messages}
 
         order_config = {
@@ -341,11 +346,9 @@ async def invoke_order_agent(
         )
 
         return {
-            "order_result": final_message or "Order agent completed",
-            "messages": [
-                AIMessage(content=f"Order agent: {final_message}")
-            ],
-        }
+    "order_result": final_message or "Order agent completed"
+}
+
 
     except Exception as e:
         logger.exception("[ROUTER→ORDER] Error")
@@ -382,7 +385,10 @@ async def invoke_nav_agent(
 
         nav_graph = await _load_subagent("nav")
 
-        messages = state.get("messages", [])
+        messages = [
+    m for m in state.get("messages", [])
+    if isinstance(m, HumanMessage)
+]
         nav_state = {"messages": messages}
 
         nav_config = {
@@ -418,17 +424,9 @@ async def invoke_nav_agent(
         )
 
         return {
-            "nav_result": final_message or "NAV agent completed",
-            "messages": [
-                AIMessage(
-                    content=(
-                        f"NAV agent: {final_message}"
-                        if final_message
-                        else "NAV agent: No response"
-                    )
-                )
-            ],
-        }
+    "nav_result": final_message or "NAV agent completed"
+}
+
 
     except Exception as e:
         logger.exception("[ROUTER→NAV] Error")
@@ -464,7 +462,10 @@ async def invoke_mcp_agent(
 
         mcp_graph = await _load_subagent("mcp")
 
-        messages = state.get("messages", [])
+        messages = [
+    m for m in state.get("messages", [])
+    if isinstance(m, HumanMessage)
+]
         mcp_state = {"messages": messages}
 
         mcp_config = {
@@ -493,10 +494,9 @@ async def invoke_mcp_agent(
         )
 
         return {
-            "messages": [
-                AIMessage(content=final_message or "MCP agent completed")
-            ],
-        }
+    "order_result": final_message or "MCP agent completed"
+}
+
 
     except Exception as e:
         logger.exception("[ROUTER→MCP] Error")
@@ -614,60 +614,28 @@ def _should_continue(state: RouterState) -> str:
 
 
 
-async def create_router_graph(
-    store: BaseStore | None = None,
+def create_router_graph(
+    store: BaseStore,
+    checkpointer: AsyncPostgresSaver,
 ) -> StateGraph:
-    """
-    Create and compile the router graph.
-
-    Flow:
-    START → remember → classify
-    classify → order/nav/mcp
-    order/nav → synthesize → END
-    mcp → END
-    """
-
     logger.info("[ROUTER] Initializing Router Graph")
-
-    if store is None:
-        from langgraph.store.memory import InMemoryStore
-
-        store = InMemoryStore()
-        logger.warning("[ROUTER] Using InMemoryStore (no persistence)")
-    else:
-        logger.info("[ROUTER] Using persistent PostgresStore")
 
     graph = StateGraph(RouterState, config_schema=Context)
 
-    # Nodes
-    graph.add_node(
-        "remember",
-        lambda state, config: remember_user_context(
-            state, config, store=store
-        ),
-    )
+    # graph.add_node(
+    #     "remember",
+    #     lambda state, config: remember_user_context(
+    #         state, config, store=store
+    #     ),
+    # )
     graph.add_node("classify_query", classify_query)
 
-    graph.add_node(
-        "order_agent",
-        partial(invoke_order_agent, store=store),
-    )
-    graph.add_node(
-        "nav_agent",
-        partial(invoke_nav_agent, store=store),
-    )
-    graph.add_node(
-        "mcp_agent",
-        partial(invoke_mcp_agent, store=store),
-    )
-    graph.add_node(
-        "synthesize",
-        partial(synthesize_results, store=store),
-    )
+    graph.add_node("order_agent", partial(invoke_order_agent, store=store))
+    graph.add_node("nav_agent", partial(invoke_nav_agent, store=store))
+    graph.add_node("mcp_agent", partial(invoke_mcp_agent, store=store))
+    graph.add_node("synthesize", partial(synthesize_results, store=store))
 
-    # Edges
-    graph.add_edge(START, "remember")
-    graph.add_edge("remember", "classify_query")
+    graph.add_edge(START, "classify_query")
 
     graph.add_conditional_edges(
         "classify_query",
@@ -679,48 +647,17 @@ async def create_router_graph(
         },
     )
 
-    graph.add_edge("order_agent", "synthesize")
-    graph.add_edge("nav_agent", "synthesize")
-
-    graph.add_edge("synthesize", END)
+    graph.add_edge("order_agent", END)
+    graph.add_edge("nav_agent", END)
+    # graph.add_edge("synthesize", END)
     graph.add_edge("mcp_agent", END)
 
-    compiled_graph = graph.compile(
+    compiled = graph.compile(
         name="router-agent",
         store=store,
+        checkpointer=checkpointer,
     )
 
     logger.info("[ROUTER] Router graph compiled successfully")
-    return compiled_graph
+    return compiled
 
-
-
-async def _create_minimal_graph() -> StateGraph:
-    """Fallback minimal graph if initialization fails."""
-
-    from langgraph.store.memory import InMemoryStore
-
-    store = InMemoryStore()
-    g = StateGraph(RouterState, config_schema=Context)
-
-    g.add_node(
-        "remember",
-        lambda state, config: remember_user_context(
-            state, config, store=store
-        ),
-    )
-    g.add_node("classify_query", classify_query)
-
-    g.add_edge(START, "remember")
-    g.add_edge("remember", "classify_query")
-    g.add_edge("classify_query", END)
-
-    return g.compile(store=store)
-
-
-
-try:
-    graph = asyncio.run(create_router_graph())
-except Exception as e:
-    logger.exception("[ROUTER] Failed to initialize full graph, using fallback")
-    graph = asyncio.run(_create_minimal_graph())

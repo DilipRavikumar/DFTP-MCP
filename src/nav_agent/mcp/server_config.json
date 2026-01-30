@@ -1,8 +1,8 @@
 {
   "servers": [
     {
-        "spec_link": "http://localhost:8080/api-docs",
-        "base_url": "http://localhost:8080",
+        "spec_link": "http://localhost:8088/api-docs",
+        "base_url": "http://localhost:8088",
         "server_name": "Nav Ingestion MCP Server"
     }
   ]

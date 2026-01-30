@@ -79,7 +79,7 @@ Guidelines:
 
 def _get_api_base_url() -> str:
     """Get the NAV API base URL from environment."""
-    return os.getenv("NAV_API_BASE_URL", "http://localhost:8080")
+    return os.getenv("NAV_API_BASE_URL", "http://localhost:8088")
 
 
 @tool
