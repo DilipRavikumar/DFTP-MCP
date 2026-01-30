@@ -113,7 +113,7 @@ def _check_agent_access(user_context: UserContext, agent_name: str) -> tuple[boo
 
     if agent_name == "nav":
         if "admin" in all_roles or "fundhouse" in all_roles:
-            return True, "Authorized"
+            return True, "Authorized"  
         return False, "Access denied."
 
     if agent_name == "mcp":
