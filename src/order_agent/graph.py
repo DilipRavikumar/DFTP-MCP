@@ -24,7 +24,7 @@ from langchain_core.runnables import RunnableConfig
 from langgraph.graph import END, START, StateGraph, add_messages
 from langgraph.types import Command, interrupt
 from typing_extensions import Annotated, TypedDict
-
+from utils.bedrock_messages import sanitize_for_bedrock
 # Configure logging
 logger = logging.getLogger(__name__)
 logger.setLevel(os.getenv("AGENT_LOG_LEVEL", "INFO"))
@@ -279,7 +279,8 @@ async def call_model(
         else:
             # Add system message at the beginning
             message_history = [system_msg] + messages
-
+        
+        
         # Invoke the model
         response = model_with_tools.invoke(message_history)
 
