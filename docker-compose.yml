@@ -1,43 +1,66 @@
-version: "3.8"
+version: "3.9"
 
 services:
-  # PostgreSQL for state persistence
-  postgres:
-    image: postgres:15-alpine
-    container_name: mcp_agent_postgres
+  keycloak:
+    image: quay.io/keycloak/keycloak:latest
+    container_name: keycloak
+    command: start-dev --import-realm
     environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: mcp_agent
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: admin
     ports:
-      - "5432:5432"
+      - "8180:8080"   
     volumes:
-      - postgres_data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
+      - ./Auth_gateway/realm.json:/opt/keycloak/data/import/realm.json
     networks:
-      - mcp_agent_network
+      - mcp-net
 
-  # Redis for task queue (optional, used by langgraph up)
-  redis:
-    image: redis:7-alpine
-    container_name: mcp_agent_redis
+  auth-service:
+    build:
+      context: ./Auth_gateway
+      dockerfile: Dockerfile.auth
+    container_name: auth-service
     ports:
-      - "6379:6379"
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
+      - "8280:8280"
+    environment:
+      KEYCLOAK_INTERNAL_URL: http://keycloak:8080
+      KEYCLOAK_PUBLIC_URL: http://localhost:8180
+      KEYCLOAK_REALM: authentication
+      KEYCLOAK_CLIENT_ID: public-client
+      GATEWAY_CALLBACK: http://localhost:8081/api/auth/callback
+      FRONTEND_CALLBACK: http://localhost:4200/login-callback
+    depends_on:
+      - keycloak
     networks:
-      - mcp_agent_network
+      - mcp-net
 
-volumes:
-  postgres_data:
+  auth-gateway:
+    build:
+      context: ./Auth_gateway
+      dockerfile: Dockerfile.openresty
+    container_name: auth-gateway
+    ports:
+      - "8081:8081"
+    depends_on:
+      - auth-service
+    networks:
+      - mcp-net
+
+  frontend:
+      build:
+        context: ./Frontend
+        dockerfile: Dockerfile
+      container_name: frontend
+      ports:
+        - "4200:4200"
+      depends_on:
+        - auth-gateway
+      networks:
+        - mcp-net
+      volumes:
+        - ./Frontend:/app
+        - /app/node_modules 
 
 networks:
-  mcp_agent_network:
+  mcp-net:
     driver: bridge

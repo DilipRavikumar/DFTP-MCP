@@ -5,6 +5,7 @@ import requests
 import httpx
 import jwt
 import logging
+import os
 
 app = FastAPI()
 
@@ -26,16 +27,18 @@ app.add_middleware(
     expose_headers=["*"],
 )
 
-KEYCLOAK_URL = "http://localhost:8180"
-REALM = "authentication"
-CLIENT_ID = "public-client"
-GATEWAY_CALLBACK = "http://localhost:8081/api/auth/callback"
-FRONTEND_CALLBACK = "http://localhost:4200/login-callback"
+KEYCLOAK_INTERNAL_URL = os.getenv("KEYCLOAK_INTERNAL_URL")
+KEYCLOAK_PUBLIC_URL = os.getenv("KEYCLOAK_PUBLIC_URL")
+REALM = os.getenv("KEYCLOAK_REALM", "authentication")
+CLIENT_ID = os.getenv("KEYCLOAK_CLIENT_ID", "public-client")
+GATEWAY_CALLBACK = os.getenv("GATEWAY_CALLBACK")
+FRONTEND_CALLBACK = os.getenv("FRONTEND_CALLBACK")
+
 
 @app.get("/api/auth/login")
 def login():
     keycloak_login_url = (
-        f"{KEYCLOAK_URL}/realms/{REALM}/protocol/openid-connect/auth"
+        f"{KEYCLOAK_PUBLIC_URL}/realms/{REALM}/protocol/openid-connect/auth"
         f"?client_id={CLIENT_ID}"
         f"&response_type=code"
         f"&redirect_uri={GATEWAY_CALLBACK}" 
@@ -46,7 +49,7 @@ def login():
 @app.get("/api/auth/logout")
 def logout():
     logout_url = (
-        f"{KEYCLOAK_URL}/realms/{REALM}/protocol/openid-connect/logout"
+        f"{KEYCLOAK_PUBLIC_URL}/realms/{REALM}/protocol/openid-connect/logout"
         f"?client_id={CLIENT_ID}"
         f"&post_logout_redirect_uri=http://localhost:8081/api/auth/post-logout"
     )
@@ -76,7 +79,7 @@ def callback(code: str = None):
         }
         
         token_response = requests.post(
-            f"{KEYCLOAK_URL}/realms/{REALM}/protocol/openid-connect/token",
+            f"{KEYCLOAK_INTERNAL_URL}/realms/{REALM}/protocol/openid-connect/token",
             data=payload,
             headers={"Content-Type": "application/x-www-form-urlencoded"},
             timeout=10
