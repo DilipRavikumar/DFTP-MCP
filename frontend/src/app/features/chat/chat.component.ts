@@ -57,7 +57,7 @@ import { marked } from 'marked';
         <div class="messages-container" #scrollContainer>
           <div *ngIf="messages().length === 0" class="empty-state">
             <!-- Professional Empty State -->
-            <h2>How can I help you today?</h2>
+            <h1>How can I help you today?</h1>
             <p>You can ask about orders, positions, or upload files.</p>
           </div>
 

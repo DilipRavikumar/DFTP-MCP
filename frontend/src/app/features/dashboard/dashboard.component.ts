@@ -20,86 +20,65 @@ import { Router } from '@angular/router';
       justify-content: center;
       align-items: center;
       height: 100vh;
-      background: linear-gradient(135deg, var(--sidebar-bg-from), var(--sidebar-bg-to));
+      background-color: var(--bg-color); /* Light Background */
       font-family: var(--font-family, sans-serif);
-      color: white;
+      color: var(--text-color);
     }
 
     .hero-card {
-      background: rgba(0, 31, 26, 0.6);
+      background: var(--input-bg); /* White/Light card */
       backdrop-filter: blur(10px);
-      border: 1px solid var(--primary-color);
+      border: 1px solid var(--border-color);
       border-radius: 24px;
       padding: 3rem;
       text-align: center;
       max-width: 500px;
       width: 90%;
-      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.05); /* Lighter shadow */
     }
 
     .icon {
       font-size: 4rem;
       margin-bottom: 1.5rem;
-      filter: drop-shadow(0 0 10px rgba(79, 255, 225, 0.3));
+      color: var(--primary-color); /* Orange Icon */
     }
 
     h1 {
       font-size: 2rem;
       margin: 0 0 1rem 0;
-      background: linear-gradient(to right, #fff, var(--accent-color));
-      -webkit-background-clip: text;
-      -webkit-text-fill-color: transparent;
+      color: var(--title-color); /* Green Title */
+      font-family: var(--font-heading); /* Canela */
       font-weight: 700;
       letter-spacing: -0.5px;
     }
 
     .subtitle {
-      color: #b2dfdb;
+      color: var(--text-color);
       font-size: 1.1rem;
       margin-bottom: 2rem;
       line-height: 1.5;
     }
 
-    .features {
-      display: flex;
-      justify-content: center;
-      gap: 1.5rem;
-      margin-bottom: 2.5rem;
-      flex-wrap: wrap;
-    }
-
-    .feature-item {
-      font-size: 0.9rem;
-      color: #e0f2f1;
-      display: flex;
-      align-items: center;
-      gap: 0.5rem;
-    }
-
-    .check {
-      color: var(--primary-color);
-      font-weight: bold;
-    }
-
     .login-btn {
       padding: 1rem 3rem;
-      background: var(--primary-color);
-      color: var(--sidebar-bg-from);
-      border: none;
-      border-radius: 100px;
+      background: var(--primary-color); /* Orange */
+      color: #FFFFFF;
+      border: 1px solid var(--primary-color);
+      border-radius: 50px; /* Pill shape */
       font-size: 1.1rem;
       font-weight: 600;
       cursor: pointer;
       transition: all 0.3s ease;
-      box-shadow: 0 0 20px rgba(0, 198, 162, 0.3);
+      box-shadow: 0 4px 6px rgba(255, 117, 64, 0.3);
       text-transform: uppercase;
       letter-spacing: 1px;
     }
 
     .login-btn:hover {
-      background: var(--accent-color);
+      background: var(--title-color); /* Green Hover */
+      border-color: var(--title-color);
+      box-shadow: 0 4px 6px rgba(14, 84, 71, 0.4);
       transform: translateY(-2px);
-      box-shadow: 0 0 30px rgba(79, 255, 225, 0.5);
     }
 
     .login-btn:active {

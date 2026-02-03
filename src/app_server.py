@@ -44,7 +44,7 @@ from langgraph.store.postgres import PostgresStore
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    db_uri = "postgresql://postgres:root@localhost:5433/mcp_agent"
+    db_uri = "postgresql://postgres:admin@localhost:5434/mcp_agent"
 
     store_cm = None
     saver_cm = None

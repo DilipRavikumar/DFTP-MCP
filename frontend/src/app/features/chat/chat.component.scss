@@ -9,7 +9,7 @@
 .sidebar {
     width: 260px;
     background: linear-gradient(180deg, var(--sidebar-bg-from), var(--sidebar-bg-to));
-    border-right: 1px solid #1a332f;
+    border-right: 1px solid var(--border-color);
     display: flex;
     flex-direction: column;
     padding: 1.5rem;
@@ -19,8 +19,10 @@
 .sidebar-header h3 {
     margin: 0 0 2rem 0;
     font-size: 1.2rem;
-    color: white;
+    color: var(--title-color);
+    /* Updated to specific Dark Green */
     font-weight: 700;
+    font-family: var(--font-heading);
 }
 
 .sidebar-info {
@@ -33,25 +35,28 @@
 
 .label {
     display: block;
-    font-size: 0.75rem;
+    font-size: 1rem;
+    /* Increased size */
     text-transform: uppercase;
-    color: #00C6A2;
-    font-weight: 600;
+    color: var(--title-color);
+    /* Green */
+    font-weight: 700;
+    /* Bold */
     margin-bottom: 0.25rem;
 }
 
 .value {
     font-size: 0.95rem;
     font-weight: 500;
-    color: white;
+    color: var(--sidebar-text);
 }
 
 .value.code {
     font-family: monospace;
-    background: rgba(0, 0, 0, 0.3);
+    background: var(--code-bg);
     padding: 2px 4px;
     border-radius: 4px;
-    color: var(--accent-color);
+    color: var(--text-color);
 }
 
 .sidebar-actions button {
@@ -60,42 +65,39 @@
     margin-top: 0.5rem;
     border: 1px solid var(--primary-color);
     background: var(--primary-color);
-    color: var(--sidebar-bg-from);
+    color: var(--message-text-user);
+    /* Use white text on orange button */
     font-weight: 600;
-    border-radius: 8px;
+    border-radius: 50px;
+    /* Pill shape */
     cursor: pointer;
     transition: all 0.2s;
-    box-shadow: 0 0 8px rgba(0, 198, 162, 0.4);
+    text-transform: uppercase;
+    /* Match "LEARN MORE" style potentially? */
+    letter-spacing: 0.5px;
+    box-shadow: 0 4px 6px rgba(255, 117, 64, 0.3);
 }
 
 .sidebar-actions button:hover {
-    background: var(--accent-color);
-    box-shadow: 0 0 12px rgba(79, 255, 225, 0.5);
-    color: var(--sidebar-bg-from);
+    background: var(--title-color);
+    /* rgb(14, 84, 71) */
+    box-shadow: 0 4px 6px rgba(14, 84, 71, 0.4);
+
+    color: #FFFFFF;
+    border-color: var(--title-color);
 }
 
-.sidebar-actions button.btn-outline {
-    background: transparent;
-    color: var(--primary-color);
-    border: 1px solid var(--primary-color);
-    box-shadow: none;
-}
-
-.sidebar-actions button.btn-outline:hover {
-    background: rgba(0, 198, 162, 0.1);
-    color: var(--accent-color);
-    border-color: var(--accent-color);
-}
+/* .btn-outline styles removed to match Send button style */
 
 .chat-main {
     flex: 1;
     display: flex;
     flex-direction: column;
-    background: #001F1A;
-    /* Dark background */
+    background: var(--chat-bg);
+    /* Light background */
     position: relative;
-    color: #E0E0E0;
-    /* Light text */
+    color: var(--text-color);
+    /* Dark text */
 }
 
 .messages-container {
@@ -110,7 +112,17 @@
 .empty-state {
     text-align: center;
     margin-top: 10vh;
-    color: #6c757d;
+    color: rgb(10, 53, 45);
+    opacity: 0.7;
+}
+
+.empty-state h2 {
+    font-family: var(--font-heading);
+    margin-bottom: 0.5rem;
+}
+
+.empty-state p {
+    font-family: var(--font-family);
 }
 
 .empty-state .icon {
@@ -133,20 +145,20 @@
     gap: 1rem;
     padding: 1rem;
     border-radius: 12px;
-    background-color: #002A24;
-    /* Dark bubble bg */
+    background-color: var(--message-bg-assistant);
+    /* Light bubble bg */
     align-items: flex-start;
-    border: 1px solid #004B43;
-    /* Dark bubble border */
-    color: #E0E0E0;
+    border: 1px solid var(--border-color);
+    /* Light bubble border */
+    color: var(--message-text-assistant);
 }
 
 .message-wrapper.user .message-bubble {
-    background-color: #004B43;
+    background-color: var(--message-bg-user);
     /* Distinct user bubble */
     border-color: var(--primary-color);
     flex-direction: row-reverse;
-    color: white;
+    color: var(--message-text-user);
 }
 
 .avatar {
@@ -171,19 +183,19 @@
 }
 
 :host ::ng-deep .content code {
-    background: rgba(0, 0, 0, 0.3);
+    background: var(--code-bg);
     padding: 2px 4px;
     border-radius: 4px;
     color: var(--accent-color);
 }
 
 :host ::ng-deep .content pre {
-    background: #00100d;
-    color: #ccc;
+    background: var(--code-bg);
+    color: var(--text-color);
     padding: 1rem;
     border-radius: 8px;
     overflow-x: auto;
-    border: 1px solid #004B43;
+    border: 1px solid var(--border-color);
 }
 
 .typing-indicator {
@@ -197,23 +209,23 @@
 
 .input-area {
     padding: 1.5rem 2rem;
-    border-top: 1px solid #004B43;
-    background: #001814;
+    border-top: 1px solid var(--border-color);
+    background: var(--input-area-bg);
     /* Slightly darker input area */
 }
 
 .input-container {
     display: flex;
     gap: 0.75rem;
-    background: #002A24;
+    background: var(--input-bg);
     padding: 0.5rem;
     border-radius: 8px;
-    border: 1px solid #004B43;
+    border: 1px solid var(--border-color);
     align-items: center;
 }
 
 .input-container:focus-within {
-    background: #002A24;
+    background: var(--input-bg);
     border-color: var(--primary-color);
     box-shadow: 0 0 8px rgba(0, 198, 162, 0.2);
 }
@@ -228,7 +240,7 @@ textarea {
     font-size: 1rem;
     outline: none;
     max-height: 150px;
-    color: white;
+    color: var(--text-color);
 }
 
 textarea::-webkit-scrollbar {
@@ -236,7 +248,7 @@ textarea::-webkit-scrollbar {
 }
 
 textarea::-webkit-scrollbar-thumb {
-    background: #004E40;
+    background: var(--border-color);
 }
 
 .attach-btn,
@@ -254,36 +266,33 @@ textarea::-webkit-scrollbar-thumb {
 }
 
 .attach-btn:hover {
-    background: rgba(0, 198, 162, 0.1);
-    color: var(--accent-color);
+    /* Light green tint */
+    color: var(--title-color);
+    /* rgb(14, 84, 71) */
 }
 
 .send-btn {
     background: var(--primary-color);
     color: var(--sidebar-bg-from);
-    padding: 0.5rem 1rem;
+    padding: 0.5rem 1.5rem;
     font-weight: 600;
-    border-radius: 6px;
+    border-radius: 50px;
+    /* Pill shape */
     height: 40px;
     /* matching other inputs */
 }
 
 .send-btn:hover {
-    background: var(--accent-color);
-    box-shadow: 0 0 8px rgba(79, 255, 225, 0.5);
+    background: var(--title-color);
+    /* rgb(14, 84, 71) */
+    box-shadow: 0 4px 6px rgba(14, 84, 71, 0.4);
 }
 
 
-.send-btn:disabled {
-    background: #004B43;
-    color: #888;
-    box-shadow: none;
-    cursor: default;
-}
 
 /* File Staging Styles */
 .file-staging {
-    background: #002A24;
+    background: var(--input-bg);
     border: 1px solid var(--primary-color);
     border-radius: 8px;
     padding: 1rem;
@@ -294,10 +303,9 @@ textarea::-webkit-scrollbar-thumb {
 }
 
 .file-info {
-    display: flex;
     align-items: center;
     gap: 0.5rem;
-    color: white;
+    color: var(--text-color);
     font-weight: 500;
 }
 
@@ -327,9 +335,9 @@ textarea::-webkit-scrollbar-thumb {
 }
 
 .description-input {
-    background: #001814;
-    border: 1px solid #004B43;
-    color: white;
+    background: var(--input-bg);
+    border: 1px solid var(--border-color);
+    color: var(--text-color);
     padding: 0.75rem;
     border-radius: 6px;
     font-family: inherit;
@@ -350,8 +358,9 @@ textarea::-webkit-scrollbar-thumb {
     background: var(--primary-color);
     color: var(--sidebar-bg-from);
     border: none;
-    padding: 0.5rem 1rem;
-    border-radius: 6px;
+    padding: 0.5rem 1.5rem;
+    border-radius: 50px;
+    /* Pill shape */
     font-weight: 600;
     cursor: pointer;
     transition: all 0.2s;
@@ -363,7 +372,7 @@ textarea::-webkit-scrollbar-thumb {
 }
 
 .btn-primary:disabled {
-    background: #004B43;
+    background: var(--border-color);
     cursor: not-allowed;
     box-shadow: none;
 }
@@ -390,7 +399,7 @@ textarea::-webkit-scrollbar-thumb {
 .close-sidebar-btn {
     background: none;
     border: none;
-    color: white;
+    color: var(--sidebar-text);
     font-size: 1.5rem;
     cursor: pointer;
     position: absolute;
@@ -438,8 +447,8 @@ textarea::-webkit-scrollbar-thumb {
         gap: 1rem;
         padding: 1rem;
         background: var(--sidebar-bg-from);
-        border-bottom: 1px solid #1a332f;
-        color: white;
+        border-bottom: 1px solid var(--border-color);
+        color: var(--sidebar-text);
         font-weight: 700;
         font-size: 1.1rem;
     }
