@@ -1,0 +1,40 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: auth-gateway
+  namespace: dftp-mcp
+  labels:
+    app: auth-gateway
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: auth-gateway
+  template:
+    metadata:
+      labels:
+        app: auth-gateway
+    spec:
+      containers:
+      - name: auth-gateway
+        image: dftp-mcp/auth-gateway:latest
+        ports:
+        - containerPort: 8081
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "50m"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: auth-gateway
+  namespace: dftp-mcp
+spec:
+  selector:
+    app: auth-gateway
+  ports:
+    - protocol: TCP
+      port: 8081
+      targetPort: 8081
+  type: ClusterIP

@@ -1,0 +1,48 @@
+---
+- name: Deploy Kubernetes Add-ons
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  
+  vars:
+    kubeconfig_path: "~/.kube/config"
+
+  tasks:
+    - name: Ensure Helm is installed
+      command: helm version
+      register: helm_check
+      ignore_errors: true
+
+    - name: Fail if Helm is not installed
+      fail:
+        msg: "Helm is required but not installed."
+      when: helm_check.rc != 0
+
+    - name: Add Ingress Nginx Repo
+      kubernetes.core.helm_repository:
+        name: ingress-nginx
+        repo_url: "https://kubernetes.github.io/ingress-nginx"
+
+    - name: Install Ingress Nginx
+      kubernetes.core.helm:
+        name: ingress-nginx
+        chart_ref: ingress-nginx/ingress-nginx
+        release_namespace: ingress-nginx
+        create_namespace: true
+        kubeconfig: "{{ kubeconfig_path }}"
+        wait: true
+
+    - name: Add Metrics Server Repo
+      kubernetes.core.helm_repository:
+        name: metrics-server
+        repo_url: "https://kubernetes-sigs.github.io/metrics-server/"
+
+    - name: Install Metrics Server
+      kubernetes.core.helm:
+        name: metrics-server
+        chart_ref: metrics-server/metrics-server
+        release_namespace: kube-system
+        kubeconfig: "{{ kubeconfig_path }}"
+        values:
+          args:
+            - --kubelet-insecure-tls
