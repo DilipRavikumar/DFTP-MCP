@@ -125,39 +125,6 @@ def _check_agent_access(user_context: UserContext, agent_name: str) -> tuple[boo
     return False, "Unknown agent."
 
 
-
-# def remember_user_context(
-#     state: RouterState,
-#     config: RunnableConfig,
-#     *,
-#     store: BaseStore,
-# ) -> dict[str, Any]:
-#     """Persist user metadata for session continuity."""
-#     try:
-#         user_context = config.get("configurable", {}).get("user", {})
-#         if not user_context or not user_context.get("user_id"):
-#             return {}
-
-#         user_id = user_context["user_id"]
-#         namespace = ("user", user_id, "context")
-#         store.put(
-#             namespace,
-#             "metadata",
-#             {
-#                 "roles": user_context.get("roles", []),
-#                 "scope": user_context.get("scope", []),
-#                 "username": user_context.get("username"),
-#             },
-#         )
-
-#         logger.debug(f"[MEMORY] Stored user context for {user_id}")
-
-#     except Exception as e:
-#         logger.error(f"[MEMORY] Failed to store user context: {e}")
-
-#     return {}
-
-
 def _save_agent_interaction(
     store: BaseStore,
     config: RunnableConfig,

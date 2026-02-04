@@ -83,6 +83,86 @@ Guidelines:
 - For write operations, wait for user confirmation before proceeding
 - Never assume user intent for destructive operations
 - Provide helpful context when operations might have side effects
+- If an user is asking about any particular question,it should understand the question and call the correct tool.if that user has no access to that tool, it should respond with an appropriate message.
+- Dont reveal the tool details to the user.
+- Call only the correct tool based on the user question.Dont call unnecessary tools for a single question. 
+- Understand the user question and call that particular tool only.If that particular user is not authorized to access that tool, it should respond with an appropriate message.
+
+You are an AI agent that answers user questions by calling backend tools.
+
+You MUST follow these rules strictly:
+
+────────────────────────────────────────
+TOOL SELECTION RULES
+────────────────────────────────────────
+
+1. FIRST, understand the user’s intent.
+2. Identify ONE correct tool that directly answers the question.
+3. Call ONLY that tool.
+4. NEVER call multiple tools for a single question.
+5. NEVER guess or explore tools.
+6. NEVER explain tool limitations to the user.
+
+Mapping rules you MUST follow:
+- Order ID → use getOrderStatesByOrderId
+- File ID → use getOrderStatesByFileId
+- Distributor ID → use getOrderStatesByDistributorId
+- Fundhouse ID → use getOrderStatesByFundhouseId
+- SLA / delay / breach → use SLA Monitoring tools
+- Exceptions → use exception tools only
+
+────────────────────────────────────────
+AUTHORIZATION RULES (CRITICAL)
+────────────────────────────────────────
+
+- You only have access to tools provided to you.
+- If the correct tool is NOT available to you:
+  - DO NOT call any other tool
+  - DO NOT ask the user for alternate IDs
+  - DO NOT explain internal limitations
+  - Respond ONLY with:
+    "You are not authorized to access this information."
+
+────────────────────────────────────────
+RESPONSE RULES
+────────────────────────────────────────
+
+- NEVER mention tool names
+- NEVER mention permissions, roles, or scopes
+- NEVER mention missing tools
+- NEVER expose internal reasoning
+- Summarize results clearly and concisely
+
+────────────────────────────────────────
+WRITE OPERATIONS
+────────────────────────────────────────
+
+- If a tool modifies data, wait for explicit user confirmation.
+- Never assume intent for write operations.
+
+If no tool is required, answer directly.
+If a tool is required and authorized, call it.
+If a tool is required but unauthorized, stop and respond with an access denial.
+
+────────────────────────────────────────
+CONVERSATION CONTEXT RULES
+────────────────────────────────────────
+
+When answering a question:
+
+1. Answer ONLY what is asked in the CURRENT user message.
+2. Do NOT combine results from previous questions unless:
+   - The user explicitly references them.
+3. If a new identifier is provided:
+   - Treat it as a NEW request.
+   - Ignore any previously mentioned identifiers.
+4. Never explain why previous identifiers do not match.
+5. Never compare current results with past results unless asked.
+
+If a result does not contain the requested entity:
+- State that it was not found.
+- Stop.
+
 """
 
 
@@ -169,7 +249,37 @@ async def _get_mcp_tools(user_context: UserContext) -> list[Any]:
             continue
 
     logger.info(f"Total unique tools loaded: {len(all_tools)}")
-    return all_tools
+    authorized_tools = [
+        tool for tool in all_tools
+        if _is_tool_authorized(tool.name, user_context)
+    ]
+
+    logger.info(
+        f"Authorized tools for user {user_context.get('user_id')}: "
+        f"{len(authorized_tools)}/{len(all_tools)}"
+    )
+
+    return authorized_tools
+
+
+from src.agent.tool_authz import TOOL_ROLE_MAP
+
+def _is_tool_authorized(tool_name: str, user_context: dict) -> bool:
+    user_roles = {
+        r.lower()
+        for r in user_context.get("roles", [])
+        if isinstance(r, str)
+    }
+
+    if not user_roles:
+        return False
+
+    allowed_roles = TOOL_ROLE_MAP.get(tool_name)
+
+    if not allowed_roles:
+        return False
+
+    return bool(user_roles & allowed_roles)
 
 
 def _is_write_operation(tool_name: str) -> bool:
@@ -278,18 +388,19 @@ async def handle_tool_calls(
     state: AgentState,
     config: RunnableConfig,
 ) -> dict[str, Any]:
-    """Process tool calls with human approval for write operations.
-
-    Args:
+    """Process tool calls with authorization + human approval for write operations.
+     Args:
         state: Current agent state
         config: Runtime configuration including user context
 
     Returns:
         Updated state with tool results
     """
+    
     messages = state["messages"]
     last_message = messages[-1]
     user_context = config.get("configurable", {}).get("user", {})
+
     if not hasattr(last_message, "tool_calls"):
         return {"messages": []}
 
@@ -307,19 +418,40 @@ async def handle_tool_calls(
             tool_args = tool_call.get("args", {})
 
             logger.info(
-                f"Processing tool call: {tool_name} for user {user_context.get('user_id')}"
+                f"Processing tool call: {tool_name} "
+                f"user={user_context.get('user_id')} "
+                f"roles={user_context.get('roles')}"
             )
 
-            # Check if this is a write operation requiring approval
+            tool = tools_by_name.get(tool_name)
+
+           
+            if not tool or not _is_tool_authorized(tool_name, user_context):
+                logger.warning(
+                    f"[AUTHZ] DENIED tool={tool_name} "
+                    f"user={user_context.get('user_id')} "
+                    f"roles={user_context.get('roles')}"
+                )
+                results.append(
+                    ToolMessage(
+                        content="You are not authorized to perform this operation.",
+                        tool_call_id=tool_call["id"],
+                    )
+                )
+                continue
+
+            
             if _is_write_operation(tool_name):
                 approval_response = interrupt(
                     {
                         "action": tool_name,
                         "args": tool_args,
-                        "description": f"Write Operation Approval Required\n\n"
-                        f"Tool: {tool_name}\n"
-                        f"Arguments: {tool_args}\n\n"
-                        f"Please review and approve this operation before proceeding.",
+                        "description": (
+                            "Write Operation Approval Required\n\n"
+                            f"Tool: {tool_name}\n"
+                            f"Arguments: {tool_args}\n\n"
+                            "Please review and approve this operation before proceeding."
+                        ),
                     }
                 )
 
@@ -331,12 +463,12 @@ async def handle_tool_calls(
                             tool_args = approval_response.resume["args"]
                         logger.info(
                             f"Write operation approved: {tool_name} "
-                            f"(user: {user_context.get('user_id')})"
+                            f"user={user_context.get('user_id')}"
                         )
                     else:
                         logger.info(
                             f"Write operation rejected: {tool_name} "
-                            f"(user: {user_context.get('user_id')})"
+                            f"user={user_context.get('user_id')}"
                         )
                         results.append(
                             ToolMessage(
@@ -346,17 +478,15 @@ async def handle_tool_calls(
                         )
                         continue
 
-            if tool_name in tools_by_name:
-                tool = tools_by_name[tool_name]
-                try:
-                    observation = await tool.ainvoke(tool_args)
-                    logger.info(f"Tool execution successful: {tool_name}")
-                except Exception as e:
-                    observation = f"Error executing tool: {str(e)}"
-                    logger.error(f"Tool execution failed: {tool_name} - {str(e)}")
-            else:
-                observation = f"Tool '{tool_name}' not found in available tools"
-                logger.warning(f"Tool not found: {tool_name}")
+            
+            try:
+                observation = await tool.ainvoke(tool_args)
+                logger.info(f"Tool execution successful: {tool_name}")
+            except Exception as e:
+                observation = f"Error executing tool: {str(e)}"
+                logger.error(
+                    f"Tool execution failed: {tool_name} - {str(e)}"
+                )
 
             results.append(
                 ToolMessage(
@@ -366,6 +496,7 @@ async def handle_tool_calls(
             )
 
         return {"messages": results}
+
     except Exception as e:
         logger.error(f"Error in handle_tool_calls: {e}")
         return {
