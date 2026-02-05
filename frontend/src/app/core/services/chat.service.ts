@@ -12,9 +12,9 @@ export interface ChatMessage {
   providedIn: "root",
 })
 export class ChatService {
-  private apiUrl = "http://localhost:8081/api";
+  private apiUrl = "/api";
 
-  constructor(private http: HttpClient, private authService: AuthService) {}
+  constructor(private http: HttpClient, private authService: AuthService) { }
 
   async *streamChat(message: string, threadId: string): AsyncGenerator<string> {
     const response = await fetch(`${this.apiUrl}/chat`, {
@@ -28,8 +28,8 @@ export class ChatService {
 
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
-    
-    let buffer = ""; 
+
+    let buffer = "";
 
     while (true) {
       const { done, value } = await reader.read();
@@ -45,13 +45,13 @@ export class ChatService {
 
         try {
           const data = JSON.parse(trimmedLine);
-          
+
           if (data.type === "message") {
             let content = data.content;
             if (content.startsWith("ROUTE:")) {
-                content = content.replace(/^ROUTE:.*?REASON:.*?\n?/s, "").trim();
+              content = content.replace(/^ROUTE:.*?REASON:.*?\n?/s, "").trim();
             }
-            
+
             if (content) yield content;
 
           } else if (data.type === "error") {

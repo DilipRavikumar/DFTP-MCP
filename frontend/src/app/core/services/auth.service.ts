@@ -12,7 +12,7 @@ interface JwtPayload {
   providedIn: 'root'
 })
 export class AuthService {
-  private apiUrl = 'http://localhost:8081/api';
+  private apiUrl = '/api';
   isAuthenticated = signal(false);
   currentUserRoles = signal<string[]>([]);
   currentUserScope = signal<string>('General');

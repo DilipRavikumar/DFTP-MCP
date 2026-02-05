@@ -17,9 +17,9 @@ spec:
     spec:
       containers:
       - name: frontend
-        image: dftp-mcp/frontend:latest 
+        image: 254800774891.dkr.ecr.us-east-2.amazonaws.com/dftp-mcp/frontend:latest 
         ports:
-        - containerPort: 4200
+        - containerPort: 80
         resources:
           requests:
             memory: "256Mi"
@@ -39,5 +39,5 @@ spec:
   ports:
     - protocol: TCP
       port: 80
-      targetPort: 4200
+      targetPort: 80
   type: ClusterIP

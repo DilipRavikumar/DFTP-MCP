@@ -89,7 +89,7 @@ import { Router } from '@angular/router';
 export class DashboardComponent {
   constructor(private router: Router) { }
   login() {
-    window.location.href = 'http://localhost:8081/api/auth/login?redirect_uri=http://localhost:4200/login-callback';
+    window.location.href = '/api/auth/login?redirect_uri=' + window.location.origin + '/login-callback';
   }
 
 }

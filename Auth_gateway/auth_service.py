@@ -51,7 +51,7 @@ def logout():
     logout_url = (
         f"{KEYCLOAK_PUBLIC_URL}/realms/{REALM}/protocol/openid-connect/logout"
         f"?client_id={CLIENT_ID}"
-        f"&post_logout_redirect_uri=http://localhost:8081/api/auth/post-logout"
+        f"&post_logout_redirect_uri={GATEWAY_CALLBACK.replace('/callback', '/post-logout')}"
     )
     response = RedirectResponse(url=logout_url)
 
@@ -62,20 +62,20 @@ def logout():
 
 @app.get("/api/auth/post-logout")
 def post_logout():
-    return RedirectResponse(url="http://localhost:4200")
+    return RedirectResponse(url=FRONTEND_CALLBACK)
 
 @app.get("/api/auth/callback")
 def callback(code: str = None):
     if not code:
         logger.error("No code received from Keycloak")
-        return RedirectResponse("http://localhost:4200/login-error")
+        return RedirectResponse(f"{FRONTEND_CALLBACK}/login-error")
 
     try:
         payload = {
             "client_id": CLIENT_ID,
             "grant_type": "authorization_code",
             "code": code,
-            "redirect_uri": "http://localhost:8081/api/auth/callback" # MUST MATCH LOGIN
+            "redirect_uri": GATEWAY_CALLBACK
         }
         
         token_response = requests.post(
@@ -91,7 +91,7 @@ def callback(code: str = None):
         token_data = token_response.json()
         access_token = token_data.get("access_token")
 
-        response = RedirectResponse(url="http://localhost:4200/login-callback")
+        response = RedirectResponse(url=f"{FRONTEND_CALLBACK}/login-callback")
         
         response.set_cookie(
             key="access_token",

@@ -17,7 +17,7 @@ spec:
     spec:
       containers:
       - name: auth-gateway
-        image: dftp-mcp/auth-gateway:latest
+        image: 254800774891.dkr.ecr.us-east-2.amazonaws.com/dftp-mcp/auth-gateway:latest
         ports:
         - containerPort: 8081
         resources:

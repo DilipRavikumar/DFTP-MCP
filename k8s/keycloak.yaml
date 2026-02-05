@@ -26,11 +26,18 @@ spec:
           value: "admin"
         - name: KC_BOOTSTRAP_ADMIN_PASSWORD
           value: "admin"
-
+        volumeMounts:
+        - name: realm-config
+          mountPath: /opt/keycloak/data/import
+          readOnly: true
         resources:
           requests:
             memory: "512Mi"
             cpu: "500m"
+      volumes:
+      - name: realm-config
+        configMap:
+          name: keycloak-realm
 ---
 apiVersion: v1
 kind: Service

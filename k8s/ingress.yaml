@@ -4,20 +4,15 @@ metadata:
   name: dftp-ingress
   namespace: dftp-mcp
   annotations:
-    nginx.ingress.kubernetes.io/rewrite-target: /
+    kubernetes.io/ingress.class: nginx
+    nginx.ingress.kubernetes.io/ssl-redirect: "false"
+    nginx.ingress.kubernetes.io/use-regex: "true"
 spec:
   ingressClassName: nginx
   rules:
-  - host: dftp-mcp.local
-    http:
+  - http:
       paths:
-      - path: /
-        pathType: Prefix
-        backend:
-          service:
-            name: frontend
-            port:
-              number: 80
+      # Auth gateway for /api routes
       - path: /api
         pathType: Prefix
         backend:
@@ -25,10 +20,19 @@ spec:
             name: auth-gateway
             port:
               number: 8081
-      - path: /auth
+      # Keycloak for authentication
+      - path: /realms
         pathType: Prefix
         backend:
           service:
             name: keycloak
             port:
               number: 8080
+      # Frontend (catch-all)
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: frontend
+            port:
+              number: 80

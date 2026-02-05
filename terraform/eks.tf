@@ -25,22 +25,20 @@ module "eks" {
     }
   }
 
-  enable_cluster_creator_admin_permissions = true
-
-  # Grant Jenkins Role admin access to the cluster
-  access_entries = {
-    jenkins = {
-      principal_arn = aws_iam_role.jenkins_role.arn
-      policy_associations = {
-        admin = {
-          policy_arn = "arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy"
-          access_scope = {
-            type = "cluster"
-          }
-        }
-      }
+  node_security_group_additional_rules = {
+    ingress_self_all = {
+      description = "Node to node all ports/protocols"
+      protocol    = "-1"
+      from_port   = 0
+      to_port     = 0
+      type        = "ingress"
+      self        = true
     }
   }
+
+  enable_cluster_creator_admin_permissions = true
+
+  # Grant Jenkins Role admin access to the cluster (REMOVED)
 
   tags = {
     Environment = "dev"

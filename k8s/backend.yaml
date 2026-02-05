@@ -1,0 +1,65 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend
+  namespace: dftp-mcp
+  labels:
+    app: backend
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: backend
+  template:
+    metadata:
+      labels:
+        app: backend
+    spec:
+      serviceAccountName: backend-sa
+      containers:
+      - name: backend
+        image: 254800774891.dkr.ecr.us-east-2.amazonaws.com/dftp-mcp/backend:latest
+        ports:
+        - containerPort: 8060
+        env:
+        - name: PYTHONPATH
+          value: "/app"
+        - name: PYTHONUNBUFFERED
+          value: "1"
+        - name: DATABASE_URL
+          value: "postgresql://postgres:admin@postgres:5432/mcp_agent"
+        - name: AWS_REGION
+          value: "us-east-2"
+        - name: BEDROCK_MODEL_ID
+          value: "global.anthropic.claude-sonnet-4-5-20250929-v1:0"
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "500m"
+          limits:
+            memory: "1Gi"
+            cpu: "1000m"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend
+  namespace: dftp-mcp
+spec:
+  selector:
+    app: backend
+  ports:
+    - protocol: TCP
+      port: 8060
+      targetPort: 8060
+  type: ClusterIP
+---
+# Service Account for backend to access AWS services (Bedrock)
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: backend-sa
+  namespace: dftp-mcp
+  annotations:
+    # This will be updated with the actual IAM role ARN after terraform apply
+    eks.amazonaws.com/role-arn: "arn:aws:iam::254800774891:role/dftp-backend-bedrock-role"

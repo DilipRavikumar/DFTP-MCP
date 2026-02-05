@@ -3,7 +3,15 @@ local cjson = require "cjson.safe"
 local cookie = ngx.var.http_cookie
 local token = cookie and cookie:match("access_token=([^;]+)")
 
+-- Special handling for /api/auth/me - don't block, just pass through
+local is_auth_me = ngx.var.uri == "/api/auth/me"
+
 if not token then
+    if is_auth_me then
+        -- For /me, just pass through without setting headers
+        -- auth-service will return authenticated: false
+        return
+    end
     ngx.status = 401
     ngx.say('{"error": "No token"}')
     return ngx.exit(401)

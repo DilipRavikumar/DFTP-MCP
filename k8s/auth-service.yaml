@@ -17,22 +17,22 @@ spec:
     spec:
       containers:
       - name: auth-service
-        image: dftp-mcp/auth-service:latest
+        image: 254800774891.dkr.ecr.us-east-2.amazonaws.com/dftp-mcp/auth-service:latest
         ports:
         - containerPort: 8280
         env:
         - name: KEYCLOAK_INTERNAL_URL
           value: "http://keycloak:8080" 
         - name: KEYCLOAK_PUBLIC_URL
-          value: "http://localhost:8180" 
+          value: "http://a68a08d5233744be59818c14ce29a651-54e479ec77696436.elb.us-east-2.amazonaws.com" 
         - name: KEYCLOAK_REALM
           value: "authentication"
         - name: KEYCLOAK_CLIENT_ID
           value: "public-client"
         - name: GATEWAY_CALLBACK
-          value: "http://localhost:8081/api/auth/callback" 
+          value: "http://a68a08d5233744be59818c14ce29a651-54e479ec77696436.elb.us-east-2.amazonaws.com/api/auth/callback" 
         - name: FRONTEND_CALLBACK
-          value: "http://localhost:4200/login-callback"
+          value: "http://a68a08d5233744be59818c14ce29a651-54e479ec77696436.elb.us-east-2.amazonaws.com"
         resources:
           requests:
             memory: "128Mi"

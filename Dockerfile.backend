@@ -1,0 +1,35 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Install system dependencies and uv
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    libpq-dev \
+    curl \
+    && rm -rf /var/lib/apt/lists/* \
+    && curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# Add uv to PATH
+ENV PATH="/root/.local/bin:$PATH"
+
+# Copy source code and dependencies
+COPY src/ ./src/
+COPY pyproject.toml ./
+
+# Create a dummy README.md if needed
+RUN touch README.md
+
+# Install dependencies with uv
+RUN uv pip install --system -e .
+
+# Create uploads directory
+RUN mkdir -p uploads
+
+# Set environment variables
+ENV PYTHONPATH=/app
+ENV PYTHONUNBUFFERED=1
+
+EXPOSE 8060
+
+CMD ["python", "-m", "uvicorn", "src.app_server:app", "--host", "0.0.0.0", "--port", "8060"]

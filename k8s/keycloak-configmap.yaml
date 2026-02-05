@@ -1,0 +1,118 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: keycloak-realm
+  namespace: dftp-mcp
+data:
+  realm-export.json: |
+    {
+      "realm": "authentication",
+      "enabled": true,
+      "sslRequired": "none",
+      "loginTheme": "keycloak.v2",
+      "clientScopes": [
+        {
+          "name": "MutualFunds",
+          "protocol": "openid-connect",
+          "attributes": {
+            "include.in.token.scope": "true",
+            "display.on.consent.screen": "true"
+          }
+        }
+      ],
+      "clients": [
+        {
+          "clientId": "public-client",
+          "name": "Angular Public Client",
+          "enabled": true,
+          "publicClient": true,
+          "protocol": "openid-connect",
+          "standardFlowEnabled": true,
+          "directAccessGrantsEnabled": true,
+          "redirectUris": [
+            "*",
+            "http://a68a08d5233744be59818c14ce29a651-54e479ec77696436.elb.us-east-2.amazonaws.com/*"
+          ],
+          "webOrigins": [
+            "*"
+          ],
+          "attributes": {
+            "post.logout.redirect.uris": "+"
+          },
+          "defaultClientScopes": [
+            "profile",
+            "email",
+            "roles",
+            "MutualFunds"
+          ],
+          "protocolMappers": [
+            {
+              "name": "sub",
+              "protocol": "openid-connect",
+              "protocolMapper": "oidc-usermodel-property-mapper",
+              "config": {
+                "user.attribute": "id",
+                "claim.name": "sub",
+                "jsonType.label": "String",
+                "id.token.claim": "true",
+                "access.token.claim": "true"
+              }
+            },
+            {
+              "name": "email",
+              "protocol": "openid-connect",
+              "protocolMapper": "oidc-usermodel-property-mapper",
+              "config": {
+                "user.attribute": "email",
+                "claim.name": "email",
+                "jsonType.label": "String",
+                "id.token.claim": "true",
+                "access.token.claim": "true"
+              }
+            },
+            {
+              "name": "roles",
+              "protocol": "openid-connect",
+              "protocolMapper": "oidc-usermodel-client-role-mapper",
+              "config": {
+                "user-role-mappings.client.id": "public-client",
+                "multivalued": "true",
+                "id.token.claim": "true",
+                "access.token.claim": "true",
+                "claim.name": "resource_access.${client_id}.roles",
+                "jsonType.label": "String"
+              }
+            }
+          ]
+        }
+      ],
+      "roles": {
+        "client": {
+          "public-client": [
+            { "name": "distributor" },
+            { "name": "fundhouse" },
+            { "name": "admin" }
+          ]
+        }
+      },
+      "users": [
+        {
+          "username": "kalyan",
+          "emailVerified": true,
+          "enabled": true,
+          "email": "kalyan@gmail.com",
+          "firstName": "kalyan",
+          "lastName": "kalyan",
+          "credentials": [
+            {
+              "type": "password",
+              "value": "kalyan",
+              "temporary": false
+            }
+          ],
+          "clientRoles": {
+            "public-client": [ "distributor", "fundhouse", "admin" ]
+          }
+        }
+      ]
+    }
