@@ -1,9 +1,5 @@
-<<<<<<< Updated upstream
-FROM node:22
-=======
 # Stage 1: Build
 FROM node:20 AS builder
->>>>>>> Stashed changes
 WORKDIR /app
 COPY package*.json ./
 RUN npm ci

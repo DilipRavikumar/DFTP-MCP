@@ -44,7 +44,8 @@ from langgraph.store.postgres import PostgresStore
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    db_uri = "postgresql://postgres:root@localhost:5433/mcp_agent"
+    # Get database URI from environment variable (set by Kubernetes deployment)
+    db_uri = os.getenv("DATABASE_URL", "postgresql://postgres:admin@postgres:5432/mcp_agent")
 
     store_cm = None
     saver_cm = None

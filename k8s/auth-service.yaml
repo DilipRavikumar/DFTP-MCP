@@ -24,15 +24,15 @@ spec:
         - name: KEYCLOAK_INTERNAL_URL
           value: "http://keycloak:8080" 
         - name: KEYCLOAK_PUBLIC_URL
-          value: "http://a68a08d5233744be59818c14ce29a651-54e479ec77696436.elb.us-east-2.amazonaws.com" 
+          value: "http://afa63dbe5d4c642fa8cbdd41dbbed252-962611e46584bf7f.elb.us-east-2.amazonaws.com" 
         - name: KEYCLOAK_REALM
           value: "authentication"
         - name: KEYCLOAK_CLIENT_ID
           value: "public-client"
         - name: GATEWAY_CALLBACK
-          value: "http://a68a08d5233744be59818c14ce29a651-54e479ec77696436.elb.us-east-2.amazonaws.com/api/auth/callback" 
+          value: "http://afa63dbe5d4c642fa8cbdd41dbbed252-962611e46584bf7f.elb.us-east-2.amazonaws.com/api/auth/callback" 
         - name: FRONTEND_CALLBACK
-          value: "http://a68a08d5233744be59818c14ce29a651-54e479ec77696436.elb.us-east-2.amazonaws.com"
+          value: "http://afa63dbe5d4c642fa8cbdd41dbbed252-962611e46584bf7f.elb.us-east-2.amazonaws.com"
         resources:
           requests:
             memory: "128Mi"
