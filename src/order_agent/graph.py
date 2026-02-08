@@ -23,8 +23,8 @@ from langchain_core.messages import BaseMessage, SystemMessage, ToolMessage
 from langchain_core.runnables import RunnableConfig
 from langgraph.graph import END, START, StateGraph, add_messages
 from langgraph.types import Command, interrupt
+from langgraph.checkpoint.memory import MemorySaver
 from typing_extensions import Annotated, TypedDict
-from utils.bedrock_messages import sanitize_for_bedrock
 # Configure logging
 logger = logging.getLogger(__name__)
 logger.setLevel(os.getenv("AGENT_LOG_LEVEL", "INFO"))
@@ -174,20 +174,20 @@ async def _get_tools(user_context: UserContext) -> list[Any]:
         
     user_roles = user_context.get("roles", [])
     
-    # 1. SCOPE CHECK: Must have "mutual funds" or be admin
-    if "mutual funds" not in user_scope and "admin" not in user_roles:
+    # 1. SCOPE CHECK: Must have "mutual funds" or be ROLE_ADMIN
+    if "mutual funds" not in user_scope and "ROLE_ADMIN" not in user_roles:
          logger.warning(f"User {user_context.get('user_id')} missing required scope 'mutual funds'")
          return []
 
-    # 2. ROLE CHECK: Must be "distributor" or "admin"
-    allowed_roles = {"distributor", "admin"}
+    # 2. ROLE CHECK: Must be "ROLE_DISTRIBUTOR" or "ROLE_ADMIN"
+    allowed_roles = {"ROLE_DISTRIBUTOR", "ROLE_ADMIN"}
     user_role_set = set(user_roles)
     if not user_role_set.intersection(allowed_roles):
-        logger.warning(f"User {user_context.get('user_id')} missing required role (distributor/admin)")
+        logger.warning(f"User {user_context.get('user_id')} missing required role (ROLE_DISTRIBUTOR/ROLE_ADMIN)")
         return []
 
     for server_name, server_config in servers.items():
-        if server_name not in user_scope and "admin" not in user_roles:
+        if server_name not in user_scope and "ROLE_ADMIN" not in user_roles:
              
              pass
 
@@ -264,20 +264,14 @@ async def call_model(
 
         model_with_tools = model.bind_tools(tools_list)
 
-        # Create system message
         system_msg = SystemMessage(content=AGENT_SYSTEM_PROMPT)
 
-        # Build messages: only add system message if not already in history
         messages = state["messages"]
-        
-        # Check if system message is already in the history
         has_system_msg = any(isinstance(msg, SystemMessage) for msg in messages)
         
         if has_system_msg:
-            # System message already present, use messages as-is
             message_history = messages
         else:
-            # Add system message at the beginning
             message_history = [system_msg] + messages
         
         
@@ -359,7 +353,6 @@ async def handle_tool_calls(
 
             # Check if this is a write operation requiring approval
             if _is_write_operation(tool_name):
-                # Request human approval for write operations
                 approval_response = interrupt(
                     {
                         "action": tool_name,
@@ -371,13 +364,10 @@ async def handle_tool_calls(
                     }
                 )
 
-                # If the response is a Command with resume, continue
-                # Otherwise wait for human input
                 if isinstance(approval_response, Command):
                     if approval_response.resume and approval_response.resume.get(
                         "type"
                     ) in ["approve", "edit"]:
-                        # Use edited args if provided
                         if approval_response.resume.get("args"):
                             tool_args = approval_response.resume["args"]
                         logger.info(
@@ -385,7 +375,6 @@ async def handle_tool_calls(
                             f"(user: {user_context.get('user_id')})"
                         )
                     else:
-                        # Operation rejected
                         logger.info(
                             f"Write operation rejected: {tool_name} "
                             f"(user: {user_context.get('user_id')})"
@@ -452,7 +441,7 @@ async def initialize_checkpointer() -> Any:
 
     db_uri = os.getenv(
         "POSTGRES_URI",
-        "postgresql://postgres:postgres@localhost:5432/order_agent",
+        "postgresql://postgres:postgres@localhost:5433/order_agent",
     )
 
     try:
@@ -464,7 +453,7 @@ async def initialize_checkpointer() -> Any:
         logger.warning(
             f"Failed to initialize PostgreSQL checkpointer: {e}. Using memory checkpointer."
         )
-        from langgraph.checkpoint.memory import MemorySaver
+        
 
         return MemorySaver()
 
@@ -481,8 +470,6 @@ async def create_agent_graph() -> StateGraph:
     Returns:
         Compiled LangGraph StateGraph with PostgreSQL persistence
     """
-    # Initialize checkpointer
-    # checkpointer = await initialize_checkpointer()
 
     # Create state graph
     graph = StateGraph(AgentState, config_schema=Context)
@@ -514,7 +501,6 @@ async def create_agent_graph() -> StateGraph:
 
 # Lazy initialization for module-level graph
 _graph = None
-_graph_lock = asyncio.Lock() if asyncio.iscoroutinefunction(asyncio.Lock) else None
 
 
 async def _get_or_create_graph():
@@ -529,7 +515,6 @@ async def _get_or_create_graph():
     except Exception as e:
         logger.error(f"Failed to initialize order agent graph: {e}")
         # Fallback: create a minimal graph for testing
-        from langgraph.checkpoint.memory import MemorySaver
         g = StateGraph(AgentState, config_schema=Context)
         g.add_node("call_model", call_model)
         g.add_edge(START, "call_model")

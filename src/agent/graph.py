@@ -24,6 +24,8 @@ from langgraph.graph import END, START, StateGraph, add_messages
 from langgraph.types import Command, interrupt
 from typing_extensions import Annotated, TypedDict
 
+from src.agent.tool_authz import TOOL_ROLE_MAP
+
 # Configure logging
 logger = logging.getLogger(__name__)
 logger.setLevel(os.getenv("AGENT_LOG_LEVEL", "INFO"))
@@ -31,9 +33,7 @@ logger.setLevel(os.getenv("AGENT_LOG_LEVEL", "INFO"))
 
 class UserContext(TypedDict, total=False):
     """User context for authorization.
-
     """
-
     user_id: str
     role: str
     roles: list[str]
@@ -42,17 +42,14 @@ class UserContext(TypedDict, total=False):
 
 class Context(TypedDict):
     """Context parameters for the agent.
-
     Set these when creating assistants OR when invoking the graph.
     """
-
     thread_id: str
     user: UserContext
 
 
 class AgentState(TypedDict):
     """State schema for the MCP agent.
-
     Follows the MessagesState pattern for chat-based agents.
     """
 
@@ -77,6 +74,25 @@ You have access to specialized subsystems via the MCP (Model Context Protocol). 
    - Check "positions" (fund holdings) for distributors or funds.
    - Can also trigger valuation processing.
 
+   4. Netting
+   - Calculates net payable/receivable amounts.
+   - Provides fund house and distributor netting results.
+   - Exposes netting reports and report downloads.
+   - Supports netting test execution and health checks.
+
+5. Settlement
+   - Executes settlement flows for fund houses and distributors.
+   - Provides settlement receipts and settlement-linked netting data.
+   - Supports settlement test execution.
+
+  6. Validation & Trade Management:
+- Validates canonical trades and returns validation results
+- Provides trade search, lookup, and filtering
+- Exposes exception and outbox event monitoring
+- Supports admin dashboards and operational metrics
+- Manages clients, funds, and firms
+- Provides system health and debug endpoints
+
 Guidelines:
 - Always be explicit about what operation you're performing
 - Summarize results clearly for the user
@@ -85,16 +101,14 @@ Guidelines:
 - Provide helpful context when operations might have side effects
 - If an user is asking about any particular question,it should understand the question and call the correct tool.if that user has no access to that tool, it should respond with an appropriate message.
 - Dont reveal the tool details to the user.
-- Call only the correct tool based on the user question.Dont call unnecessary tools for a single question. 
+- Call only the correct tool based on the user question.Dont call unnecessary tools for a single question.
 - Understand the user question and call that particular tool only.If that particular user is not authorized to access that tool, it should respond with an appropriate message.
 
-You are an AI agent that answers user questions by calling backend tools.
 
+You are an AI agent that answers user questions by calling backend tools.
 You MUST follow these rules strictly:
 
-────────────────────────────────────────
 TOOL SELECTION RULES
-────────────────────────────────────────
 
 1. FIRST, understand the user’s intent.
 2. Identify ONE correct tool that directly answers the question.
@@ -102,6 +116,7 @@ TOOL SELECTION RULES
 4. NEVER call multiple tools for a single question.
 5. NEVER guess or explore tools.
 6. NEVER explain tool limitations to the user.
+
 
 Mapping rules you MUST follow:
 - Order ID → use getOrderStatesByOrderId
@@ -111,9 +126,8 @@ Mapping rules you MUST follow:
 - SLA / delay / breach → use SLA Monitoring tools
 - Exceptions → use exception tools only
 
-────────────────────────────────────────
+
 AUTHORIZATION RULES (CRITICAL)
-────────────────────────────────────────
 
 - You only have access to tools provided to you.
 - If the correct tool is NOT available to you:
@@ -123,9 +137,7 @@ AUTHORIZATION RULES (CRITICAL)
   - Respond ONLY with:
     "You are not authorized to access this information."
 
-────────────────────────────────────────
 RESPONSE RULES
-────────────────────────────────────────
 
 - NEVER mention tool names
 - NEVER mention permissions, roles, or scopes
@@ -133,22 +145,22 @@ RESPONSE RULES
 - NEVER expose internal reasoning
 - Summarize results clearly and concisely
 
-────────────────────────────────────────
+
 WRITE OPERATIONS
-────────────────────────────────────────
 
 - If a tool modifies data, wait for explicit user confirmation.
 - Never assume intent for write operations.
+
 
 If no tool is required, answer directly.
 If a tool is required and authorized, call it.
 If a tool is required but unauthorized, stop and respond with an access denial.
 
-────────────────────────────────────────
+
 CONVERSATION CONTEXT RULES
-────────────────────────────────────────
 
 When answering a question:
+
 
 1. Answer ONLY what is asked in the CURRENT user message.
 2. Do NOT combine results from previous questions unless:
@@ -159,12 +171,13 @@ When answering a question:
 4. Never explain why previous identifiers do not match.
 5. Never compare current results with past results unless asked.
 
+
 If a result does not contain the requested entity:
 - State that it was not found.
 - Stop.
 
-"""
 
+"""
 
 def _parse_mcp_servers() -> dict[str, dict[str, str]]:
     """Parse MCP servers configuration from environment.
@@ -262,11 +275,9 @@ async def _get_mcp_tools(user_context: UserContext) -> list[Any]:
     return authorized_tools
 
 
-from src.agent.tool_authz import TOOL_ROLE_MAP
-
 def _is_tool_authorized(tool_name: str, user_context: dict) -> bool:
     user_roles = {
-        r.lower()
+        r
         for r in user_context.get("roles", [])
         if isinstance(r, str)
     }
@@ -530,7 +541,7 @@ async def initialize_checkpointer() -> Any:
 
     db_uri = os.getenv(
         "POSTGRES_URI",
-        "postgresql://postgres:postgres@localhost:5432/mcp_agent",
+        "postgresql://postgres:postgres@localhost:5433/mcp_agent",
     )
 
     try:

@@ -20,6 +20,7 @@ from typing import Any
 import httpx
 from langchain.tools import tool
 from langchain_core.messages import BaseMessage, SystemMessage, ToolMessage
+from langchain_core.messages import AIMessage
 from langchain_core.runnables import RunnableConfig
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import Command, interrupt
@@ -149,35 +150,6 @@ def upload_nav_file(file_path: str) -> str:
         return f"Error uploading NAV file: {str(e)}"
 
 
-@tool
-def check_nav_service_health() -> str:
-    """Check if the NAV upload service is running and healthy.
-
-    This tool performs a health check on the NAV service.
-
-    Returns:
-        Health status of the NAV service
-    """
-    try:
-        api_url = _get_api_base_url()
-        response = httpx.get(
-            f"{api_url}/api/nav/health",
-            timeout=10.0,
-        )
-
-        if response.status_code == 200:
-            logger.info("NAV service health check passed")
-            return response.text
-        else:
-            error_msg = f"Health check failed with status {response.status_code}"
-            logger.warning(error_msg)
-            return f"Error: {error_msg}"
-
-    except Exception as e:
-        logger.error(f"NAV service health check error: {str(e)}")
-        return f"Error checking NAV service health: {str(e)}"
-
-
 async def _get_tools(user_context: UserContext) -> list[Any]:
     """Initialize and retrieve tools for NAV agent.
 
@@ -190,7 +162,7 @@ async def _get_tools(user_context: UserContext) -> list[Any]:
     Returns:
         List of authorized LangChain Tool objects
     """
-    tools_list = [upload_nav_file, check_nav_service_health]
+    tools_list = [upload_nav_file]
 
     try:
         from langchain_mcp_adapters import ClientMCPManager
@@ -228,11 +200,11 @@ async def _get_tools(user_context: UserContext) -> list[Any]:
          logger.warning(f"User {user_context.get('user_id')} missing required scope 'mutual funds' for NAV Agent")
          return []
 
-    # 2. ROLE CHECK: Must be "fundhouse" (or "admin" if we want to allow admins)
-    allowed_roles = {"fundhouse"}
+    # 2. ROLE CHECK: Must be "ROLE_FUND" (or "admin" if we want to allow admins)
+    allowed_roles = {"ROLE_FUND", "ROLE_ADMIN"}
     user_role_set = set(user_roles)
     if not user_role_set.intersection(allowed_roles):
-        logger.warning(f"User {user_context.get('user_id')} missing required role 'fundhouse' for NAV Agent")
+        logger.warning(f"User {user_context.get('user_id')} missing required role 'ROLE_FUND' for NAV Agent")
         return []
 
     for server_name, server_config in servers.items():
@@ -272,7 +244,7 @@ def _is_write_operation(tool_name: str) -> bool:
         True if the operation is a write/mutating operation requiring approval
     """
     # Tools that are safe and don't require approval
-    safe_tools = ["upload_nav_file", "check_nav_service_health"]
+    safe_tools = ["upload_nav_file"]
     if tool_name in safe_tools:
         return False
     
@@ -454,9 +426,9 @@ async def handle_tool_calls(
                 if tool_name == "upload_nav_file" and isinstance(observation, str):
                     # If the response looks like JSON, keep it clean
                     if observation.strip().startswith("{") or observation.strip().startswith("["):
-                        observation = f"✓ File uploaded successfully!\n\n{observation}"
+                        observation = f"File uploaded successfully!\n\n{observation}"
                     elif not observation.startswith("Error"):
-                        observation = f"✓ {observation}"
+                        observation = f"{observation}"
             except Exception as e:
                 observation = f"Error executing tool: {str(e)}"
                 logger.error(f"Tool execution failed: {tool_name} - {str(e)}")
@@ -489,7 +461,7 @@ async def finalize_response(
     Returns:
         Updated state with final AIMessage for user
     """
-    from langchain_core.messages import AIMessage
+    
     
     messages = state["messages"]
     
@@ -631,17 +603,13 @@ def get_graph():
         return _graph_instance
         
     except RuntimeError:
-        # No running event loop (e.g. CLI usage), safe to run async setup
         return asyncio.run(create_agent_graph())
 
-# For backward compatibility with LangGraph CLI
 if __name__ == "__main__":
     graph = asyncio.run(create_agent_graph())
 else:
-    # When imported, try to get graph if safe, otherwise rely on get_graph()
     try:
         asyncio.get_running_loop()
-        # Don't init yet, let router call get_graph()
         graph = None 
     except RuntimeError:
         graph = asyncio.run(create_agent_graph())

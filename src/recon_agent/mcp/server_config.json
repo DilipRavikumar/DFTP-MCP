@@ -1,0 +1,9 @@
+{
+  "servers": [
+    {
+        "spec_link": "http://localhost:8087/api-docs",
+        "base_url": "http://localhost:8087",
+        "server_name": "Recon MCP Server"
+    }
+  ]
+}

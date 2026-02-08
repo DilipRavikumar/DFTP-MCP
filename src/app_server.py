@@ -17,17 +17,19 @@ from fastapi import (
     Form,
     HTTPException,
 )
+from langchain_core.messages import HumanMessage
+from src.router_agent.graph import create_router_graph
+from langgraph.store.postgres import PostgresStore
 from fastapi.responses import RedirectResponse, StreamingResponse
 from pydantic import BaseModel  # Required for ChatRequest
 from typing import Dict, Any, Optional, List
 from contextlib import asynccontextmanager
 from pathlib import Path
 import sys
+from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 
 sys.path.append(str(Path(__file__).parent.parent))
-from langchain_core.messages import HumanMessage
-from src.router_agent.graph import create_router_graph
-from langgraph.store.postgres import PostgresStore
+
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("APP_SERVER")
@@ -36,16 +38,10 @@ class ChatRequest(BaseModel):
     message: str
     thread_id: str = "default"
 
-from contextlib import asynccontextmanager
-
-from contextlib import asynccontextmanager
-from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
-from langgraph.store.postgres import PostgresStore
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Get database URI from environment variable (set by Kubernetes deployment)
-    db_uri = os.getenv("DATABASE_URL", "postgresql://postgres:admin@postgres:5432/mcp_agent")
+    db_uri = "postgresql://postgres:root@localhost:5433/mcp_agent"
 
     store_cm = None
     saver_cm = None
@@ -59,10 +55,8 @@ async def lifespan(app: FastAPI):
         logger.info("[BOOT] Initializing AsyncPostgresSaver")
         saver_cm = AsyncPostgresSaver.from_conn_string(db_uri)
 
-        # 🔑 ENTER CONTEXT → REAL SAVER
         checkpointer = await saver_cm.__aenter__()
 
-        # 🔑 THIS IS MANDATORY (CREATES TABLES + CONSTRAINTS)
         await checkpointer.setup()
 
         logger.info("[BOOT] Building Router Graph")
@@ -177,10 +171,6 @@ async def upload_file(
             detail=f"Failed to save file: {e}",
         )
 
-
-    from langchain_core.messages import HumanMessage
-
-
     abs_path = str(file_path.absolute())
     msg_content = (
         f"I have uploaded a file named '{file.filename}'.\n"
@@ -191,9 +181,9 @@ async def upload_file(
 
 
     input_state = {
+        "__clear__": True, 
         "messages": [HumanMessage(content=msg_content)]
     }
-
 
     config = {
         "configurable": {
@@ -201,7 +191,6 @@ async def upload_file(
             "user": user_context,
         }
     }
-
 
     try:
         result = await req.app.state.graph.ainvoke(
@@ -212,23 +201,18 @@ async def upload_file(
         agent_response = "File processed."
 
         if "messages" in result and result["messages"]:
+            tool_error = None
+            ai_message = None
+
             for msg in reversed(result["messages"]):
-                if msg.type == "ai":
-                    agent_response = msg.content
-
-
-                    if isinstance(agent_response, list):
-                        text_content = ""
-                        for block in agent_response:
-                            if (
-                                isinstance(block, dict)
-                                and block.get("type") == "text"
-                            ):
-                                text_content += block.get("text", "")
-                            elif isinstance(block, str):
-                                text_content += block
-                        agent_response = text_content
+                if msg.type == "tool" and str(msg.content).startswith("Error"):
+                    tool_error = msg.content
                     break
+
+                if msg.type == "ai" and ai_message is None:
+                    ai_message = msg.content
+
+            agent_response = tool_error or ai_message or "File processed."
 
 
         return {"agent_response": agent_response}

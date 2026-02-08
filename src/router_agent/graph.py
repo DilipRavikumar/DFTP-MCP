@@ -1,6 +1,7 @@
 """
 Production-ready LangGraph router agent for multi-agent coordination.
 
+
 This router agent classifies user queries and routes them to specialized subagents
 (Order Agent, NAV Agent, MCP Agent), featuring:
 - Query classification with AWS Bedrock (Claude)
@@ -11,7 +12,9 @@ This router agent classifies user queries and routes them to specialized subagen
 - Comprehensive error handling and logging
 """
 
+
 from __future__ import annotations
+
 
 import asyncio
 import logging
@@ -20,6 +23,7 @@ import os
 import uuid
 from functools import partial
 from typing import Any
+
 
 from langchain_core.messages import (
     AIMessage,
@@ -32,7 +36,7 @@ from langchain_core.runnables import RunnableConfig
 from langgraph.graph import END, START, StateGraph
 from langgraph.store.base import BaseStore
 from typing_extensions import Annotated, TypedDict
-
+from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 
 logger = logging.getLogger(__name__)
 logger.setLevel(os.getenv("AGENT_LOG_LEVEL", "INFO"))
@@ -54,7 +58,6 @@ class Context(TypedDict):
     thread_id: str
     user: UserContext
 
-
 class RouterState(TypedDict):
     """Router agent state schema."""
 
@@ -62,16 +65,13 @@ class RouterState(TypedDict):
     route_decision: Annotated[str, "Routing decision"]
     order_result: Annotated[str, "Order agent result"]
     nav_result: Annotated[str, "NAV agent result"]
-
-from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
-
-
-
+    recon_result: Annotated[str, "Reconciliation agent result"]
 
 ROUTER_SYSTEM_PROMPT = """You are a query router agent. Your job is to classify user queries and route them to the appropriate specialized agents.
 
 ROUTING RULES:
 1. "order": ONLY for ORDER FILE UPLOADS
+   -this agent is responsible for uploading an order file,when the user gives the file and ask for upload an order like that
    - User is uploading order files (.txt, .csv, .json, etc.)
    - Keywords: "upload order", "order file", "submit order"
 
@@ -80,24 +80,35 @@ ROUTING RULES:
    - Keywords: "upload nav", "nav file", "nav data", "nav ingestion"
 
 3. "general": ALL OTHER QUERIES (DEFAULT)
+   -status or state related queries like status of an order, status of order with respect to fund house id, or any general question related to the system
+   - RECONCILIATION-RELATED QUESTIONS (without file upload intent)
    - Data retrieval
    - Analysis
    - Questions
    - Greetings
+
+   4. "recon": ONLY for RECONCILIATION FILE UPLOADS
+   - this agent is called when user is uploading reconciliation files, or doing any adhoc reconciliation, or netting file upload, or settlement file upload, or any reconciliation related upload.
+   - if the user ask any reconciliation related question, this agent should NOT be called.
+   - upload reconciliation files
+   - ad-hoc reconciliation
+   - netting file upload
+   - settlement file upload
+   - reconciliation upload
 
 Respond with ONLY the routing decision in this exact format:
 ROUTE: <decision>
 REASON: <brief explanation>
 """
 
-SYNTHESIZER_SYSTEM_PROMPT = """You are a response synthesizer. Your job is to combine results from multiple agents into a coherent, helpful response."""
 
+SYNTHESIZER_SYSTEM_PROMPT = """You are a response synthesizer. Your job is to combine results from multiple agents into a coherent, helpful response."""
 
 def _check_agent_access(user_context: UserContext, agent_name: str) -> tuple[bool, str]:
     """RBAC enforcement for subagents."""
 
-    user_role = user_context.get("role", "").lower()
-    user_roles = [r.lower() for r in user_context.get("roles", [])] if user_context.get("roles") else []
+    user_role = user_context.get("role", "")
+    user_roles = [r for r in user_context.get("roles", [])] if user_context.get("roles") else []
     all_roles = {user_role} | set(user_roles)
     all_roles.discard("")
 
@@ -107,23 +118,27 @@ def _check_agent_access(user_context: UserContext, agent_name: str) -> tuple[boo
     )
 
     if agent_name == "order":
-        if "admin" in all_roles or "distributor" in all_roles:
+        if "ROLE_ADMIN" in all_roles or "ROLE_DISTRIBUTOR" in all_roles:
             return True, "Authorized"
         return False, "Access denied."
 
     if agent_name == "nav":
-        if "admin" in all_roles or "fundhouse" in all_roles:
+        if "ROLE_ADMIN" in all_roles or "ROLE_FUND" in all_roles:
             return True, "Authorized"  
+        return False, "Access denied."
+   
+    if agent_name == "recon":
+        if {"ROLE_ADMIN", "ROLE_DISTRIBUTOR", "ROLE_FUND"} & all_roles:
+            return True, "Authorized"
         return False, "Access denied."
 
     if agent_name == "mcp":
-        if all_roles & {"admin", "distributor", "fundhouse"}:
+        if all_roles & {"ROLE_ADMIN", "ROLE_DISTRIBUTOR", "ROLE_FUND"}:
             return True, "Authorized"
         return False, "Access denied."
 
     logger.warning(f"[RBAC] Unknown agent: {agent_name}")
     return False, "Unknown agent."
-
 
 def _save_agent_interaction(
     store: BaseStore,
@@ -156,7 +171,6 @@ def _save_agent_interaction(
         logger.error(f"[MEMORY] Failed to store interaction: {e}")
 
 
-
 async def _load_subagent(agent_name: str) -> Any:
     """Dynamically load a subagent graph."""
 
@@ -168,6 +182,10 @@ async def _load_subagent(agent_name: str) -> Any:
         elif agent_name == "nav":
             import src.nav_agent.graph as nav_module
             return nav_module.get_graph()
+       
+        elif agent_name == "recon":
+            from src.recon_agent.graph import graph as recon_graph
+            return recon_graph
 
         elif agent_name == "mcp":
             import src.agent.graph as mcp_module
@@ -178,7 +196,6 @@ async def _load_subagent(agent_name: str) -> Any:
     except Exception as e:
         logger.error(f"Failed to load subagent {agent_name}: {e}")
         raise
-
 
 async def classify_query(
     state: RouterState,
@@ -278,7 +295,7 @@ async def invoke_order_agent(
                 "order_result": msg,
                 "messages": [AIMessage(content=msg)],
             }
-
+        
         order_graph = await _load_subagent("order")
 
         messages = [
@@ -313,7 +330,8 @@ async def invoke_order_agent(
         )
 
         return {
-    "order_result": final_message or "Order agent completed"
+    "order_result": final_message or "Order agent completed",
+    "messages": result.get("messages", [])
 }
 
 
@@ -391,9 +409,9 @@ async def invoke_nav_agent(
         )
 
         return {
-    "nav_result": final_message or "NAV agent completed"
+    "nav_result": final_message or "NAV agent completed",
+    "messages": result.get("messages", [])
 }
-
 
     except Exception as e:
         logger.exception("[ROUTER→NAV] Error")
@@ -404,6 +422,76 @@ async def invoke_nav_agent(
             ],
         }
 
+
+async def invoke_recon_agent(
+    state: RouterState,
+    config: RunnableConfig,
+    *,
+    store: BaseStore,
+) -> dict[str, Any]:
+    try:
+        logger.info("[ROUTER→RECON] Invoking reconciliation agent")
+
+
+        user_context = config.get("configurable", {}).get("user", {})
+        authorized, msg = _check_agent_access(user_context, "recon")
+
+
+        if not authorized:
+            return {
+                "recon_result": msg,
+                "messages": [AIMessage(content=msg)],
+            }
+
+
+        recon_graph = await _load_subagent("recon")
+
+
+        messages = [
+            m for m in state.get("messages", [])
+            if isinstance(m, HumanMessage)
+        ]
+
+
+        recon_state = {"messages": messages}
+
+
+        recon_config = {
+            "configurable": {
+                "thread_id": config.get("configurable", {}).get("thread_id", "default"),
+                "user": user_context,
+            }
+        }
+
+
+        result = await recon_graph.ainvoke(recon_state, config=recon_config)
+
+
+        final_message = ""
+        for msg_obj in reversed(result.get("messages", [])):
+            if isinstance(msg_obj, (AIMessage, ToolMessage)):
+                final_message = msg_obj.content
+                break
+
+
+        _save_agent_interaction(
+            store, config, "recon", final_message
+        )
+
+
+        return {
+    "recon_result": final_message or "Reconciliation agent completed",
+    "messages": result.get("messages", [])
+}
+
+    except Exception as e:
+        logger.exception("[ROUTER→RECON] Error")
+        return {
+            "recon_result": str(e),
+            "messages": [
+                AIMessage(content=f"Reconciliation agent error: {str(e)}")
+            ],
+        }
 
 
 async def invoke_mcp_agent(
@@ -465,6 +553,8 @@ async def invoke_mcp_agent(
 }
 
 
+
+
     except Exception as e:
         logger.exception("[ROUTER→MCP] Error")
         return {
@@ -472,6 +562,7 @@ async def invoke_mcp_agent(
                 AIMessage(content=f"MCP agent error: {str(e)}")
             ],
         }
+
 
 async def synthesize_results(
     state: RouterState,
@@ -485,7 +576,6 @@ async def synthesize_results(
         from langchain_aws.chat_models import ChatBedrock
 
         logger.info("[ROUTER→SYNTHESIZE] Synthesizing results")
-
         user_context = config.get("configurable", {}).get("user", {})
         logger.info(
             f"[ROUTER→SYNTHESIZE] User: {user_context.get('user_id')}"
@@ -558,8 +648,7 @@ Please synthesize these results into a clear, helpful response.
                 AIMessage(content=f"Error synthesizing results: {str(e)}")
             ]
         }
-
-
+    
 
 def _should_continue(state: RouterState) -> str:
     """Determine next node based on routing decision."""
@@ -576,10 +665,10 @@ def _should_continue(state: RouterState) -> str:
         return "order_agent"
     elif route_decision == "nav":
         return "nav_agent"
+    elif route_decision == "recon":
+        return "recon_agent"
     else:
         return "mcp_agent"
-
-
 
 def create_router_graph(
     store: BaseStore,
@@ -589,16 +678,11 @@ def create_router_graph(
 
     graph = StateGraph(RouterState, config_schema=Context)
 
-    # graph.add_node(
-    #     "remember",
-    #     lambda state, config: remember_user_context(
-    #         state, config, store=store
-    #     ),
-    # )
     graph.add_node("classify_query", classify_query)
 
     graph.add_node("order_agent", partial(invoke_order_agent, store=store))
     graph.add_node("nav_agent", partial(invoke_nav_agent, store=store))
+    graph.add_node("recon_agent",partial(invoke_recon_agent, store=store))
     graph.add_node("mcp_agent", partial(invoke_mcp_agent, store=store))
     graph.add_node("synthesize", partial(synthesize_results, store=store))
 
@@ -610,13 +694,14 @@ def create_router_graph(
         {
             "order_agent": "order_agent",
             "nav_agent": "nav_agent",
+            "recon_agent": "recon_agent",
             "mcp_agent": "mcp_agent",
         },
     )
 
     graph.add_edge("order_agent", END)
     graph.add_edge("nav_agent", END)
-    # graph.add_edge("synthesize", END)
+    graph.add_edge("recon_agent", END)
     graph.add_edge("mcp_agent", END)
 
     compiled = graph.compile(
@@ -627,4 +712,3 @@ def create_router_graph(
 
     logger.info("[ROUTER] Router graph compiled successfully")
     return compiled
-

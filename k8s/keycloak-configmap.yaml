@@ -10,6 +10,8 @@ data:
       "enabled": true,
       "sslRequired": "none",
       "loginTheme": "keycloak.v2",
+
+
       "clientScopes": [
         {
           "name": "MutualFunds",
@@ -20,6 +22,8 @@ data:
           }
         }
       ],
+
+
       "clients": [
         {
           "clientId": "public-client",
@@ -29,22 +33,30 @@ data:
           "protocol": "openid-connect",
           "standardFlowEnabled": true,
           "directAccessGrantsEnabled": true,
+
+
           "redirectUris": [
             "*",
             "http://a68a08d5233744be59818c14ce29a651-54e479ec77696436.elb.us-east-2.amazonaws.com/*"
           ],
-          "webOrigins": [
-            "*"
-          ],
+
+
+          "webOrigins": ["*"],
+
+
           "attributes": {
             "post.logout.redirect.uris": "+"
           },
+
+
           "defaultClientScopes": [
             "profile",
             "email",
             "roles",
             "MutualFunds"
           ],
+
+
           "protocolMappers": [
             {
               "name": "sub",
@@ -86,20 +98,24 @@ data:
           ]
         }
       ],
+
+
       "roles": {
         "client": {
           "public-client": [
-            { "name": "distributor" },
-            { "name": "fundhouse" },
-            { "name": "admin" }
+            { "name": "ROLE_DISTRIBUTOR" },
+            { "name": "ROLE_FUND" },
+            { "name": "ROLE_ADMIN" }
           ]
         }
       },
+
+
       "users": [
         {
           "username": "kalyan",
-          "emailVerified": true,
           "enabled": true,
+          "emailVerified": true,
           "email": "kalyan@gmail.com",
           "firstName": "kalyan",
           "lastName": "kalyan",
@@ -111,8 +127,47 @@ data:
             }
           ],
           "clientRoles": {
-            "public-client": [ "distributor", "fundhouse", "admin" ]
+            "public-client": ["ROLE_ADMIN"]
+          }
+        },
+        {
+          "username": "A",
+          "enabled": true,
+          "emailVerified": true,
+          "email": "a123@gmail.com",
+          "firstName": "a",
+          "lastName": "a",
+          "credentials": [
+            {
+              "type": "password",
+              "value": "Admin@123",
+              "temporary": false
+            }
+          ],
+          "clientRoles": {
+            "public-client": ["ROLE_DISTRIBUTOR"]
+          }
+        },
+        {
+          "username": "Fund",
+          "enabled": true,
+          "emailVerified": true,
+          "email": "fund@gmail.com",
+          "firstName": "Fund",
+          "lastName": "fund",
+          "credentials": [
+            {
+              "type": "password",
+              "value": "Fund@123",
+              "temporary": false
+            }
+          ],
+          "clientRoles": {
+            "public-client": ["ROLE_FUND"]
           }
         }
       ]
     }
+
+
+

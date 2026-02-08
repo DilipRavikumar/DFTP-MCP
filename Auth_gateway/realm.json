@@ -90,9 +90,9 @@
   "roles": {
     "client": {
       "public-client": [
-        { "name": "distributor" },
-        { "name": "fundhouse" },
-        { "name": "admin" }
+        { "name": "ROLE_DISTRIBUTOR" },
+        { "name": "ROLE_FUND" },
+        { "name": "ROLE_ADMIN" }
       ]
     }
   },
@@ -112,7 +112,43 @@
         }
       ],
       "clientRoles": {
-        "public-client": [ "distributor", "fundhouse", "admin" ]
+        "public-client": [ "ROLE_ADMIN" ]
+      }
+    },
+    {
+      "username": "Fund",
+      "emailVerified": true,
+      "enabled": true,
+      "email": "fund@gmail.com",
+      "firstName": "fund",
+      "lastName": "fund",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "Fund@123",
+          "temporary": false
+        }
+      ],
+      "clientRoles": {
+        "public-client": [ "ROLE_FUND" ]
+      }
+    },
+    {
+      "username": "A",
+      "emailVerified": true,
+      "enabled": true,
+      "email": "a@gmail.com",
+      "firstName": "a",
+      "lastName": "a",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "Admin@123",
+          "temporary": false
+        }
+      ],
+      "clientRoles": {
+        "public-client": [ "ROLE_DISTRIBUTOR" ]
       }
     }
   ]
