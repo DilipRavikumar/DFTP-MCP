@@ -30,7 +30,6 @@ from src.agent.tool_authz import TOOL_ROLE_MAP
 logger = logging.getLogger(__name__)
 logger.setLevel(os.getenv("AGENT_LOG_LEVEL", "INFO"))
 
-
 class UserContext(TypedDict, total=False):
     """User context for authorization.
     """
@@ -39,7 +38,6 @@ class UserContext(TypedDict, total=False):
     roles: list[str]
     scope: list[str]
 
-
 class Context(TypedDict):
     """Context parameters for the agent.
     Set these when creating assistants OR when invoking the graph.
@@ -47,14 +45,12 @@ class Context(TypedDict):
     thread_id: str
     user: UserContext
 
-
 class AgentState(TypedDict):
     """State schema for the MCP agent.
     Follows the MessagesState pattern for chat-based agents.
     """
 
     messages: Annotated[list[BaseMessage], add_messages]
-
 
 AGENT_SYSTEM_PROMPT = """You are a helpful AI agent with access to tools.
 
@@ -104,7 +100,6 @@ Guidelines:
 - Call only the correct tool based on the user question.Dont call unnecessary tools for a single question.
 - Understand the user question and call that particular tool only.If that particular user is not authorized to access that tool, it should respond with an appropriate message.
 
-
 You are an AI agent that answers user questions by calling backend tools.
 You MUST follow these rules strictly:
 
@@ -117,7 +112,6 @@ TOOL SELECTION RULES
 5. NEVER guess or explore tools.
 6. NEVER explain tool limitations to the user.
 
-
 Mapping rules you MUST follow:
 - Order ID → use getOrderStatesByOrderId
 - File ID → use getOrderStatesByFileId
@@ -125,7 +119,6 @@ Mapping rules you MUST follow:
 - Fundhouse ID → use getOrderStatesByFundhouseId
 - SLA / delay / breach → use SLA Monitoring tools
 - Exceptions → use exception tools only
-
 
 AUTHORIZATION RULES (CRITICAL)
 
@@ -145,22 +138,18 @@ RESPONSE RULES
 - NEVER expose internal reasoning
 - Summarize results clearly and concisely
 
-
 WRITE OPERATIONS
 
 - If a tool modifies data, wait for explicit user confirmation.
 - Never assume intent for write operations.
 
-
 If no tool is required, answer directly.
 If a tool is required and authorized, call it.
 If a tool is required but unauthorized, stop and respond with an access denial.
 
-
 CONVERSATION CONTEXT RULES
 
 When answering a question:
-
 
 1. Answer ONLY what is asked in the CURRENT user message.
 2. Do NOT combine results from previous questions unless:
@@ -171,11 +160,9 @@ When answering a question:
 4. Never explain why previous identifiers do not match.
 5. Never compare current results with past results unless asked.
 
-
 If a result does not contain the requested entity:
 - State that it was not found.
 - Stop.
-
 
 """
 
@@ -185,7 +172,7 @@ def _parse_mcp_servers() -> dict[str, dict[str, str]]:
     Returns:
         Dictionary mapping server names to their configuration
     """
-    mcp_config_str = os.getenv("MCP_SERVERS", "{}")
+    mcp_config_str = os.getenv("GENERAL_MCP_SERVERS", "{}")
 
     try:
         config = json.loads(mcp_config_str)
@@ -197,9 +184,8 @@ def _parse_mcp_servers() -> dict[str, dict[str, str]]:
             }
         return servers
     except (json.JSONDecodeError, KeyError) as e:
-        logger.error(f"Failed to parse MCP_SERVERS: {e}")
+        logger.error(f"Failed to parse GENERAL_MCP_SERVERS: {e}")
         return {}
-
 
 async def _get_mcp_tools(user_context: UserContext) -> list[Any]:
     """Initialize and retrieve tools from configured MCP servers.
@@ -220,16 +206,15 @@ async def _get_mcp_tools(user_context: UserContext) -> list[Any]:
 
     servers = _parse_mcp_servers()
     if not servers:
-        logger.warning("No MCP servers configured in MCP_SERVERS environment variable")
+        logger.warning("No MCP servers configured in GENERAL_MCP_SERVERS environment variable")
         return []
 
-    user_scope = user_context.get("scope", [])
     all_tools = []
     seen_tool_names = set()  
 
     for server_name, server_config in servers.items():
         logger.info(f"DEBUG: Attempting to connect to MCP server '{server_name}' at {server_config.get('url')}")
-        
+       
         try:
             mcp_config = {
                 server_name: {
@@ -239,8 +224,8 @@ async def _get_mcp_tools(user_context: UserContext) -> list[Any]:
             }
 
             client = MultiServerMCPClient(mcp_config)
-            tools = await client.get_tools() 
-            
+            tools = await client.get_tools()
+           
             unique_tools = []
             for tool in tools:
                 tool_name = tool.name
@@ -249,7 +234,7 @@ async def _get_mcp_tools(user_context: UserContext) -> list[Any]:
                     unique_tools.append(tool)
                 else:
                     logger.debug(f"Skipping duplicate tool: {tool_name}")
-            
+           
             logger.info(
                 f"Loaded {len(unique_tools)} unique tools from {server_name} "
                 f"({len(tools) - len(unique_tools)} duplicates filtered) "
@@ -274,7 +259,6 @@ async def _get_mcp_tools(user_context: UserContext) -> list[Any]:
 
     return authorized_tools
 
-
 def _is_tool_authorized(tool_name: str, user_context: dict) -> bool:
     user_roles = {
         r
@@ -292,7 +276,6 @@ def _is_tool_authorized(tool_name: str, user_context: dict) -> bool:
 
     return bool(user_roles & allowed_roles)
 
-
 def _is_write_operation(tool_name: str) -> bool:
     """Determine if a tool call represents a write operation.
 
@@ -304,7 +287,6 @@ def _is_write_operation(tool_name: str) -> bool:
     """
     write_keywords = ["create", "update", "delete", "add", "remove", "post", "put"]
     return any(keyword in tool_name.lower() for keyword in write_keywords)
-
 
 async def call_model(
     state: AgentState,
@@ -325,7 +307,7 @@ async def call_model(
     """
     try:
         from langchain_aws.chat_models import ChatBedrock
-        from langchain_core.messages import AIMessage
+        from langchain_core.messages import AIMessage, HumanMessage
 
         user_context = config.get("configurable", {}).get("user", {})
         mcp_tools = await _get_mcp_tools(user_context)
@@ -336,7 +318,7 @@ async def call_model(
                 final_tools[tool.name] = tool
             else:
                 logger.warning(f"Duplicate tool detected and filtered: {tool.name}")
-        
+       
         mcp_tools = list(final_tools.values())
         logger.info(f"Final tool count after deduplication: {len(mcp_tools)}")
 
@@ -352,9 +334,8 @@ async def call_model(
         )
 
         model_with_tools = model.bind_tools(mcp_tools)
-
         messages_to_send = state["messages"]
-        
+       
         message_types = [type(m).__name__ for m in messages_to_send]
         logger.info(f"Sending messages types: {message_types}")
         if messages_to_send:
@@ -377,7 +358,6 @@ async def call_model(
         )
         return {"messages": [error_response]}
 
-
 def _should_continue(state: AgentState) -> str:
     """Route based on whether the model made tool calls.
 
@@ -394,7 +374,6 @@ def _should_continue(state: AgentState) -> str:
         return "handle_tool_calls"
     return END
 
-
 async def handle_tool_calls(
     state: AgentState,
     config: RunnableConfig,
@@ -407,7 +386,7 @@ async def handle_tool_calls(
     Returns:
         Updated state with tool results
     """
-    
+   
     messages = state["messages"]
     last_message = messages[-1]
     user_context = config.get("configurable", {}).get("user", {})
@@ -451,7 +430,7 @@ async def handle_tool_calls(
                 )
                 continue
 
-            
+           
             if _is_write_operation(tool_name):
                 approval_response = interrupt(
                     {
@@ -489,7 +468,7 @@ async def handle_tool_calls(
                         )
                         continue
 
-            
+           
             try:
                 observation = await tool.ainvoke(tool_args)
                 logger.info(f"Tool execution successful: {tool_name}")
@@ -518,7 +497,6 @@ async def handle_tool_calls(
                 )
             ]
         }
-
 
 async def initialize_checkpointer() -> Any:
     """Initialize PostgreSQL checkpointer for state persistence.
@@ -556,7 +534,6 @@ async def initialize_checkpointer() -> Any:
         from langgraph.checkpoint.memory import MemorySaver
 
         return MemorySaver()
-
 
 async def create_agent_graph() -> StateGraph:
     """Create and compile the agent graph.
@@ -598,10 +575,8 @@ async def create_agent_graph() -> StateGraph:
     logger.info("Agent graph compiled successfully")
     return compiled_graph
 
-
 # Graph instance
 _graph_instance = None
-
 
 async def get_graph():
     """Get or create the graph instance (lazy initialization)."""
@@ -609,7 +584,6 @@ async def get_graph():
     if _graph_instance is None:
         _graph_instance = await create_agent_graph()
     return _graph_instance
-
 
 graph = None
 

@@ -28,11 +28,6 @@
       "spec_link": "http://localhost:7090/v3/api-docs",
       "base_url": "http://localhost:7090",
       "server_name": "Settlement MCP Server"
-    },
-    {
-      "spec_link": "http://localhost:8087/api-docs",
-      "base_url": "http://localhost:8087",
-      "server_name": "Reconciliation MCP Server"
     }
     
   ]

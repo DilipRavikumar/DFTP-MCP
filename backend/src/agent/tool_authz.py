@@ -86,27 +86,6 @@ TOOL_ROLE_MAP = {
     "health": {ROLE_ADMIN},
     "healthCheck": {ROLE_ADMIN},
 
-    "triggerAdHocReconciliation": {ROLE_ADMIN},
-    "triggerAdhocReconciliation": {ROLE_ADMIN},
-    "triggerRoutineReconciliation": {ROLE_ADMIN},
-
-    "health": {ROLE_ADMIN},
-
-    "getFundHouseReconciliations": {ROLE_ADMIN, ROLE_FUND},
-    "getDistributorReconciliations": {ROLE_ADMIN, ROLE_DISTRIBUTOR},
-
-    "getEntityReconciliations": {ROLE_ADMIN, ROLE_DISTRIBUTOR, ROLE_FUND},
-    "getSuccessfulReconciliations": {ROLE_ADMIN, ROLE_DISTRIBUTOR, ROLE_FUND},
-    "getFailedReconciliations": {ROLE_ADMIN, ROLE_DISTRIBUTOR, ROLE_FUND},
-
-    "getAdhocReconciliationStatus": {ROLE_ADMIN},
-
-
-    "getEligibleDates": {ROLE_ADMIN},
-
-    "getAdminDashboard": {ROLE_ADMIN},
-    "getAllReconciliations": {ROLE_ADMIN},
-
     "runNetting": {ROLE_ADMIN},
 
 

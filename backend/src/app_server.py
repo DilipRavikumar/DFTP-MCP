@@ -1,35 +1,31 @@
-import os
 import json
 import logging
-import jwt
+import sys
+from contextlib import asynccontextmanager
+from pathlib import Path
+from typing import Any, Dict, Optional
+
 import uvicorn
-import httpx
 from dotenv import load_dotenv
-from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
-
-load_dotenv()
-
 from fastapi import (
     FastAPI,
-    Request,
-    UploadFile,
     File,
     Form,
     HTTPException,
+    Request,
+    UploadFile,
 )
-from langchain_core.messages import HumanMessage
-from src.router_agent.graph import create_router_graph
-from langgraph.store.postgres import PostgresStore
-from fastapi.responses import RedirectResponse, StreamingResponse
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel  # Required for ChatRequest
-from typing import Dict, Any, Optional, List
-from contextlib import asynccontextmanager
-from pathlib import Path
-import sys
-from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 
 sys.path.append(str(Path(__file__).parent.parent))
+from langchain_core.messages import HumanMessage
+from langgraph.store.postgres import PostgresStore
+from langgraph.store.redis import RedisStore
 
+from src.router_agent.graph import create_router_graph
+
+load_dotenv()
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("APP_SERVER")
@@ -38,11 +34,10 @@ class ChatRequest(BaseModel):
     message: str
     thread_id: str = "default"
 
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     db_uri = "postgresql://postgres:root@localhost:5433/mcp_agent"
-
+    redis_uri = "redis://localhost:6379"
     store_cm = None
     saver_cm = None
     checkpointer = None
@@ -52,17 +47,16 @@ async def lifespan(app: FastAPI):
         store_cm = PostgresStore.from_conn_string(db_uri)
         store = store_cm.__enter__()
 
-        logger.info("[BOOT] Initializing AsyncPostgresSaver")
-        saver_cm = AsyncPostgresSaver.from_conn_string(db_uri)
+        logger.info("[BOOT] Initializing RedisSaver")
 
-        checkpointer = await saver_cm.__aenter__()
-
-        await checkpointer.setup()
+        # ENTER CONTEXT → REAL SAVER
+        saver_cm = RedisStore.from_conn_string(redis_uri)
+        redis_store = saver_cm.__enter__()
 
         logger.info("[BOOT] Building Router Graph")
         graph = create_router_graph(
             store=store,
-            checkpointer=checkpointer,
+            redis_store=redis_store,
         )
 
         app.state.graph = graph
@@ -72,7 +66,7 @@ async def lifespan(app: FastAPI):
         logger.info("[SHUTDOWN] Closing resources")
 
         if saver_cm:
-            await saver_cm.__aexit__(None, None, None)
+            saver_cm.__exit__(None, None, None)
 
         if store_cm:
             store_cm.__exit__(None, None, None)
@@ -171,6 +165,10 @@ async def upload_file(
             detail=f"Failed to save file: {e}",
         )
 
+
+    from langchain_core.messages import HumanMessage
+
+
     abs_path = str(file_path.absolute())
     msg_content = (
         f"I have uploaded a file named '{file.filename}'.\n"
@@ -185,12 +183,14 @@ async def upload_file(
         "messages": [HumanMessage(content=msg_content)]
     }
 
+
     config = {
         "configurable": {
             "thread_id": thread_id,
             "user": user_context,
         }
     }
+
 
     try:
         result = await req.app.state.graph.ainvoke(

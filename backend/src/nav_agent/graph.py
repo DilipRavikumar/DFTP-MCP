@@ -20,12 +20,12 @@ from typing import Any
 import httpx
 from langchain.tools import tool
 from langchain_core.messages import BaseMessage, SystemMessage, ToolMessage
-from langchain_core.messages import AIMessage
 from langchain_core.runnables import RunnableConfig
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import Command, interrupt
 from typing_extensions import Annotated, TypedDict
-
+from langchain_aws import ChatBedrock
+from langgraph.graph import add_messages
 # Configure logging
 logger = logging.getLogger(__name__)
 logger.setLevel(os.getenv("AGENT_LOG_LEVEL", "INFO"))
@@ -58,7 +58,7 @@ class AgentState(TypedDict):
     Follows the MessagesState pattern for chat-based agents.
     """
 
-    messages: Annotated[list[BaseMessage], "The conversation messages"]
+    messages: Annotated[list[BaseMessage], add_messages]
 
 
 AGENT_SYSTEM_PROMPT = """You are a helpful NAV (Net Asset Value) management agent with access to tools.
@@ -150,6 +150,35 @@ def upload_nav_file(file_path: str) -> str:
         return f"Error uploading NAV file: {str(e)}"
 
 
+@tool
+def check_nav_service_health() -> str:
+    """Check if the NAV upload service is running and healthy.
+
+    This tool performs a health check on the NAV service.
+
+    Returns:
+        Health status of the NAV service
+    """
+    try:
+        api_url = _get_api_base_url()
+        response = httpx.get(
+            f"{api_url}/api/nav/health",
+            timeout=10.0,
+        )
+
+        if response.status_code == 200:
+            logger.info("NAV service health check passed")
+            return response.text
+        else:
+            error_msg = f"Health check failed with status {response.status_code}"
+            logger.warning(error_msg)
+            return f"Error: {error_msg}"
+
+    except Exception as e:
+        logger.error(f"NAV service health check error: {str(e)}")
+        return f"Error checking NAV service health: {str(e)}"
+
+
 async def _get_tools(user_context: UserContext) -> list[Any]:
     """Initialize and retrieve tools for NAV agent.
 
@@ -162,7 +191,7 @@ async def _get_tools(user_context: UserContext) -> list[Any]:
     Returns:
         List of authorized LangChain Tool objects
     """
-    tools_list = [upload_nav_file]
+    tools_list = [upload_nav_file, check_nav_service_health]
 
     try:
         from langchain_mcp_adapters import ClientMCPManager
@@ -244,7 +273,7 @@ def _is_write_operation(tool_name: str) -> bool:
         True if the operation is a write/mutating operation requiring approval
     """
     # Tools that are safe and don't require approval
-    safe_tools = ["upload_nav_file"]
+    safe_tools = ["upload_nav_file", "check_nav_service_health"]
     if tool_name in safe_tools:
         return False
     
@@ -259,26 +288,27 @@ async def call_model(
 ) -> dict[str, Any]:
     """Call the LLM to decide on next action.
 
+
     The LLM is bound with tools and will decide whether to:
     1. Call a tool
     2. Respond to the user directly
+
 
     Args:
         state: Current agent state with message history
         config: Runtime configuration including user context
 
+
     Returns:
         Updated state with new messages from the LLM
     """
     try:
-        from langchain_aws.chat_models import ChatBedrock
-        from langchain_core.messages import AIMessage
+
 
         user_context = config.get("configurable", {}).get("user", {})
-        
-
         # Initialize tools based on user authorization
         tools_list = await _get_tools(user_context)
+
 
         # Initialize Bedrock model with tools
         model = ChatBedrock(
@@ -291,28 +321,43 @@ async def call_model(
             max_tokens=4096,
         )
 
+
         model_with_tools = model.bind_tools(tools_list)
 
-        # Create system message
+
         system_msg = SystemMessage(content=AGENT_SYSTEM_PROMPT)
 
+
+        messages = state["messages"]
+        has_system_msg = any(isinstance(msg, SystemMessage) for msg in messages)
+       
+        if has_system_msg:
+            message_history = messages
+        else:
+            message_history = [system_msg] + messages
+       
         # Invoke the model
-        response = model_with_tools.invoke([system_msg] + state["messages"])
+        response = model_with_tools.invoke(message_history)
+
 
         logger.info(
             f"Model response for user {user_context.get('user_id')}: "
             f"(tool_calls: {len(response.tool_calls) if hasattr(response, 'tool_calls') and response.tool_calls else 0})"
         )
 
+
         return {"messages": [response]}
     except Exception as e:
         logger.error(f"Error in call_model: {e}")
         from langchain_core.messages import AIMessage
 
+
         error_response = AIMessage(
             content=f"I encountered an error while processing your request: {str(e)}"
         )
         return {"messages": [error_response]}
+
+
 
 
 def _should_continue(state: AgentState) -> str:
@@ -426,9 +471,9 @@ async def handle_tool_calls(
                 if tool_name == "upload_nav_file" and isinstance(observation, str):
                     # If the response looks like JSON, keep it clean
                     if observation.strip().startswith("{") or observation.strip().startswith("["):
-                        observation = f"File uploaded successfully!\n\n{observation}"
+                        observation = f"✓ File uploaded successfully!\n\n{observation}"
                     elif not observation.startswith("Error"):
-                        observation = f"{observation}"
+                        observation = f"✓ {observation}"
             except Exception as e:
                 observation = f"Error executing tool: {str(e)}"
                 logger.error(f"Tool execution failed: {tool_name} - {str(e)}")
@@ -461,7 +506,7 @@ async def finalize_response(
     Returns:
         Updated state with final AIMessage for user
     """
-    
+    from langchain_core.messages import AIMessage
     
     messages = state["messages"]
     
@@ -603,13 +648,17 @@ def get_graph():
         return _graph_instance
         
     except RuntimeError:
+        # No running event loop (e.g. CLI usage), safe to run async setup
         return asyncio.run(create_agent_graph())
 
+# For backward compatibility with LangGraph CLI
 if __name__ == "__main__":
     graph = asyncio.run(create_agent_graph())
 else:
+    # When imported, try to get graph if safe, otherwise rely on get_graph()
     try:
         asyncio.get_running_loop()
+        # Don't init yet, let router call get_graph()
         graph = None 
     except RuntimeError:
         graph = asyncio.run(create_agent_graph())
